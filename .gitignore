@@ -1,0 +1,14 @@
+.env
+env
+env.example
+
+uploads
+downloads
+
+node_modules
+config.js
+
+# Session folder and all its contents
+session/
+
+edit-env.js

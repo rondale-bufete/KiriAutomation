@@ -1,0 +1,2075 @@
+//kiri-automation.js
+
+const puppeteer = require('puppeteer');
+const fs = require('fs-extra');
+const path = require('path');
+
+class KiriEngineAutomation {
+    constructor(options = {}) {
+        this.browser = null;
+        this.page = null;
+        this.isLoggedIn = false;
+        this.isLoggingIn = false; // Flag to prevent multiple login attempts
+        this.buttonClicked = false; // Flag to prevent multiple button clicks
+        this.sessionPath = options.sessionPath || './session';
+        this.headless = options.headless || false;
+        this.timeout = options.timeout || 30000;
+        this.browserType = options.browserType || 'chromium'; // chromium, chrome, firefox, edge
+        this.executablePath = options.executablePath || null;
+        this.reloadInterval = null; // For the 5-second page reload cycle
+        this.isReloading = false; // Flag to prevent multiple simultaneous reloads
+        this.trackedProjectId = null;     // Store project ID we're monitoring
+        this.trackedProjectTitle = null;  // Store project title we're monitoring
+    }
+
+    async init() {
+        try {
+            // Close existing browser if it exists
+            if (this.browser) {
+                console.log('Closing existing browser instance...');
+                try {
+                    await this.browser.close();
+                } catch (e) {
+                    console.log('Error closing existing browser:', e.message);
+                }
+                this.browser = null;
+                this.page = null;
+            }
+
+            console.log('Launching new browser instance...');
+
+            // Configure browser launch options based on browser type
+            const launchOptions = {
+                headless: this.headless,
+                defaultViewport: null,
+                userDataDir: this.sessionPath
+            };
+
+            // Add browser-specific configurations
+            if (this.browserType === 'chrome' || this.browserType === 'edge') {
+                // Use system Chrome or Edge
+                if (this.executablePath) {
+                    launchOptions.executablePath = this.executablePath;
+                } else {
+                    // Auto-detect browser paths
+                    const os = require('os');
+                    const platform = os.platform();
+
+                    if (platform === 'win32') {
+                        if (this.browserType === 'chrome') {
+                            launchOptions.executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+                        } else if (this.browserType === 'edge') {
+                            launchOptions.executablePath = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+                        }
+                    } else if (platform === 'darwin') {
+                        if (this.browserType === 'chrome') {
+                            launchOptions.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+                        }
+                    } else if (platform === 'linux') {
+                        if (this.browserType === 'chrome') {
+                            launchOptions.executablePath = '/usr/bin/google-chrome';
+                        }
+                    }
+                }
+
+                // Chrome/Edge specific args
+                launchOptions.args = [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    // Download-specific optimizations
+                    '--disable-download-protection',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--disable-default-apps',
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-ipc-flooding-protection',
+                    '--allow-running-insecure-content',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees'
+                ];
+            } else if (this.browserType === 'firefox') {
+                // Firefox specific configuration
+                launchOptions.product = 'firefox';
+                launchOptions.args = [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox'
+                ];
+            } else {
+                // Default Chromium configuration
+                launchOptions.args = [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding'
+                ];
+            }
+
+            console.log(`Launching ${this.browserType} browser...`);
+            this.browser = await puppeteer.launch(launchOptions);
+
+            console.log('Creating new page...');
+            this.page = await this.browser.newPage();
+
+            // Wait for page to be fully ready
+            await this.page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 });
+
+            // Set user agent to avoid detection
+            await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+            // Set longer timeouts for network issues
+            this.page.setDefaultTimeout(60000);
+            this.page.setDefaultNavigationTimeout(60000);
+
+            // Handle redirects to prevent going back to login
+            this.page.on('response', async (response) => {
+                if (response.url().includes('/login') && this.isLoggedIn) {
+                    console.log('Detected redirect to login page, attempting to navigate back to main app...');
+                    try {
+                        await this.page.goto('https://www.kiriengine.app/webapp/', {
+                            waitUntil: 'networkidle2',
+                            timeout: 30000
+                        });
+                    } catch (e) {
+                        console.log('Failed to navigate back to main app:', e.message);
+                    }
+                }
+            });
+
+            // Set viewport
+            // await this.page.setViewport({ width: 1755, height: 1080 });
+
+            return true;
+        } catch (error) {
+            throw new Error(`Failed to initialize browser: ${error.message}`);
+        }
+    }
+
+    async login(email, password) {
+        try {
+            console.log('Login called with email:', email);
+            console.log('Login called with password:', password ? '[PROVIDED]' : '[MISSING]');
+
+            // Prevent multiple simultaneous login attempts
+            if (this.isLoggingIn) {
+                console.log('Login already in progress, waiting...');
+                while (this.isLoggingIn) {
+                    await this.page.waitForTimeout(1000);
+                }
+                return { success: this.isLoggedIn, message: this.isLoggedIn ? 'Login completed' : 'Login failed' };
+            }
+
+            this.isLoggingIn = true;
+            this.buttonClicked = false; // Reset button click flag for new login attempt
+
+            if (!this.page) {
+                await this.init();
+            }
+
+            // Navigate to Kiri Engine with retry logic for network issues
+            console.log('Navigating to Kiri Engine...');
+            let navigationSuccess = false;
+            let navigationAttempts = 0;
+            const maxNavigationAttempts = 3;
+
+            while (!navigationSuccess && navigationAttempts < maxNavigationAttempts) {
+                navigationAttempts++;
+                console.log(`Navigation attempt ${navigationAttempts}/${maxNavigationAttempts}...`);
+
+                try {
+                    await this.page.goto('https://www.kiriengine.app/webapp/', {
+                        waitUntil: 'networkidle2',
+                        timeout: this.timeout
+                    });
+                    navigationSuccess = true;
+                    console.log('Navigation successful');
+                } catch (e) {
+                    console.log(`Navigation failed (attempt ${navigationAttempts}):`, e.message);
+                    if (navigationAttempts < maxNavigationAttempts) {
+                        console.log('Retrying navigation in 3 seconds...');
+                        await this.page.waitForTimeout(3000);
+                    }
+                }
+            }
+
+            if (!navigationSuccess) {
+                throw new Error('Failed to navigate to Kiri Engine after multiple attempts');
+            }
+
+            // Wait for page to load completely (reduced wait time)
+            await this.page.waitForTimeout(1500);
+
+            // Check if we need to click the "Log In" button to access the login form
+            try {
+                const loginButton = await this.page.$('a.log_in_btn');
+                if (loginButton) {
+                    console.log('Clicking Log In button to access login form...');
+                    await loginButton.click();
+                    await this.page.waitForTimeout(1000); // Reduced wait time
+                }
+            } catch (e) {
+                console.log('Log In button not found or already on login page');
+            }
+
+            // Check if already logged in
+            const isAlreadyLoggedIn = await this.checkLoginStatus();
+            if (isAlreadyLoggedIn) {
+                console.log('Already logged in');
+                this.isLoggedIn = true;
+                return { success: true, message: 'Already logged in' };
+            }
+
+            // Wait for login form to be visible after clicking Log In button (reduced wait)
+            console.log('Waiting for login form to load...');
+            await this.page.waitForTimeout(1000);
+
+            // Look for login form elements using actual Kiri Engine selectors
+            const loginSelectors = [
+                'input[type="email"].k-input-inner',
+                'input[type="email"]',
+                '.k-input-inner[type="email"]'
+            ];
+
+            let emailInput = null;
+            for (const selector of loginSelectors) {
+                try {
+                    emailInput = await this.page.$(selector);
+                    if (emailInput) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // If still no email input found, wait a bit more and try again (reduced wait)
+            if (!emailInput) {
+                console.log('Email input not found, waiting for form to load...');
+                await this.page.waitForTimeout(1500);
+
+                for (const selector of loginSelectors) {
+                    try {
+                        emailInput = await this.page.$(selector);
+                        if (emailInput) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            }
+
+            if (!emailInput) {
+                throw new Error('Could not find email input field');
+            }
+
+            // Fill login form
+            console.log('Filling login form...');
+            console.log('Email to enter:', email);
+
+            // Clear and fill email field with multiple methods
+            await emailInput.click();
+            await emailInput.evaluate(input => input.value = ''); // Clear any existing value
+
+            // Try multiple input methods for better reliability
+            console.log('Setting email value using multiple methods...');
+
+            // Method 1: Direct value setting with events
+            await emailInput.evaluate((input, value) => {
+                input.focus();
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+            }, email);
+
+            // Method 2: Type the email character by character as fallback
+            await this.page.waitForTimeout(500);
+            const currentEmailValue = await emailInput.evaluate(input => input.value);
+            if (!currentEmailValue || currentEmailValue !== email) {
+                console.log('Direct value setting failed, trying type method...');
+                await emailInput.click();
+                await emailInput.evaluate(input => input.value = '');
+                await emailInput.type(email, { delay: 50 });
+            }
+
+            // Verify email was entered
+            const emailValue = await emailInput.evaluate(input => input.value);
+            console.log('Email field value after fast method:', emailValue);
+
+            // Find and fill password using actual Kiri Engine selectors
+            const passwordSelectors = [
+                'input[type="password"].k-input-inner',
+                'input[type="password"]',
+                '.k-input-inner[type="password"]'
+            ];
+
+            let passwordInput = null;
+            for (const selector of passwordSelectors) {
+                try {
+                    passwordInput = await this.page.$(selector);
+                    if (passwordInput) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!passwordInput) {
+                throw new Error('Could not find password input field');
+            }
+
+            console.log('Password to enter:', password);
+
+            // Clear and fill password field with multiple methods
+            await passwordInput.click();
+            await passwordInput.evaluate(input => input.value = ''); // Clear any existing value
+
+            // Try multiple input methods for better reliability
+            console.log('Setting password value using multiple methods...');
+
+            // Method 1: Direct value setting with events
+            await passwordInput.evaluate((input, value) => {
+                input.focus();
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+            }, password);
+
+            // Method 2: Type the password character by character as fallback
+            await this.page.waitForTimeout(500);
+            const currentPasswordValue = await passwordInput.evaluate(input => input.value);
+            if (!currentPasswordValue || currentPasswordValue !== password) {
+                console.log('Direct value setting failed, trying type method...');
+                await passwordInput.click();
+                await passwordInput.evaluate(input => input.value = '');
+                await passwordInput.type(password, { delay: 50 });
+            }
+
+            // Verify password was entered
+            const passwordValue = await passwordInput.evaluate(input => input.value);
+            console.log('Password field value after fast method:', passwordValue ? '[HIDDEN]' : '[EMPTY]');
+
+            // Submit form using actual Kiri Engine submit button
+            console.log('Submitting login form...');
+            const submitSelectors = [
+                'div.form_item button.mask-button_hover',
+                'button.mask-button_hover',
+                'button[data-v-056c4f14].mask-button_hover',
+                'button[class*="mask-button"]',
+                'button:has-text("Log In")',
+                'button'
+            ];
+
+            let submitButton = null;
+            for (const selector of submitSelectors) {
+                try {
+                    submitButton = await this.page.$(selector);
+                    if (submitButton) {
+                        // Check if it's the login button by looking for "Log In" text
+                        const buttonText = await this.page.evaluate(el => el.textContent, submitButton);
+                        console.log('Found button with text:', buttonText);
+                        if (buttonText && buttonText.toLowerCase().includes('log in')) {
+                            console.log('Login button found and selected');
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.log('Selector failed:', selector, e.message);
+                    continue;
+                }
+            }
+
+            if (!submitButton) {
+                console.log('No submit button found, trying Enter key...');
+                // Try pressing Enter as fallback
+                await this.page.keyboard.press('Enter');
+            } else {
+                console.log('Clicking login button...');
+
+                // Prevent multiple button clicks
+                if (this.buttonClicked) {
+                    console.log('Button already clicked, skipping...');
+                } else {
+                    this.buttonClicked = true;
+
+                    // Single click strategy with proper state management
+                    console.log('Clicking login button once...');
+
+                    // Check if button is still clickable and not disabled
+                    const isButtonEnabled = await submitButton.evaluate(button => {
+                        return !button.disabled && button.offsetParent !== null;
+                    });
+
+                    if (!isButtonEnabled) {
+                        console.log('Login button is disabled or not visible, trying Enter key...');
+                        await this.page.keyboard.press('Enter');
+                    } else {
+                        // Single click with proper event handling
+                        try {
+                            await submitButton.click();
+                            console.log('Login button clicked successfully');
+                        } catch (e) {
+                            console.log('Normal click failed, trying JavaScript click...');
+                            await submitButton.evaluate(button => {
+                                button.click();
+                            });
+                        }
+                    }
+                }
+
+                // Wait for the click to register and prevent multiple clicks
+                console.log('Waiting for login to process...');
+                await this.page.waitForTimeout(3000);
+            }
+
+            // Wait for navigation or login completion with multiple checks
+            console.log('Waiting for login to complete...');
+            let loginSuccess = false;
+
+            // Try multiple approaches to detect login success
+            for (let attempt = 1; attempt <= 5; attempt++) {
+                console.log(`Login verification attempt ${attempt}/5...`);
+
+                try {
+                    // Wait for navigation
+                    await this.page.waitForNavigation({
+                        waitUntil: 'networkidle2',
+                        timeout: 15000
+                    });
+                    console.log('Navigation detected');
+                } catch (e) {
+                    console.log('No navigation detected, checking current state...');
+                }
+
+                // Wait for page to stabilize
+                await this.page.waitForTimeout(2000);
+
+                // Check login status
+                loginSuccess = await this.checkLoginStatus();
+                if (loginSuccess) {
+                    console.log('Login success detected!');
+
+                    // Additional wait to ensure we don't get redirected back
+                    await this.page.waitForTimeout(3000);
+
+                    // Double-check we're still logged in
+                    const stillLoggedIn = await this.checkLoginStatus();
+                    if (stillLoggedIn) {
+                        console.log('Login confirmed - still logged in after waiting');
+                        break;
+                    } else {
+                        console.log('Login was temporary, continuing to check...');
+                        loginSuccess = false;
+                    }
+                }
+
+                // Wait a bit more and check again
+                if (attempt < 5) {
+                    console.log('Login not yet successful, waiting and retrying...');
+                    await this.page.waitForTimeout(3000);
+                }
+            }
+
+            if (loginSuccess) {
+                this.isLoggedIn = true;
+                this.isLoggingIn = false;
+                console.log('Login successful');
+                return { success: true, message: 'Successfully logged in' };
+            } else {
+                this.isLoggingIn = false;
+                console.log('Login failed - checking for error messages...');
+
+                // Check for error messages on the page
+                const errorMessages = await this.page.evaluate(() => {
+                    const errorSelectors = [
+                        '.error', '.alert', '.warning', '.message',
+                        '[class*="error"]', '[class*="alert"]', '[class*="warning"]'
+                    ];
+                    const errors = [];
+                    for (const selector of errorSelectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (el.textContent && el.textContent.trim()) {
+                                errors.push(el.textContent.trim());
+                            }
+                        }
+                    }
+                    return errors;
+                });
+
+                // Check specifically for network errors
+                const hasNetworkError = errorMessages.some(msg =>
+                    msg.toLowerCase().includes('network') ||
+                    msg.toLowerCase().includes('unavailable') ||
+                    msg.toLowerCase().includes('connection')
+                );
+
+                if (hasNetworkError) {
+                    console.log('Network error detected, attempting retry...');
+                    this.isLoggingIn = false;
+
+                    // Wait a bit and retry the entire login process
+                    await this.page.waitForTimeout(5000);
+                    console.log('Retrying login due to network error...');
+                    return await this.login(email, password);
+                }
+
+                if (errorMessages.length > 0) {
+                    console.log('Error messages found:', errorMessages);
+                    throw new Error(`Login failed: ${errorMessages.join(', ')}`);
+                } else {
+                    throw new Error('Login failed - credentials may be incorrect or form not submitted properly');
+                }
+            }
+
+        } catch (error) {
+            this.isLoggingIn = false;
+            console.error('Login error:', error.message);
+            return { success: false, message: `Login failed: ${error.message}` };
+        }
+    }
+
+    async checkLoginStatus() {
+        try {
+            console.log('Checking login status...');
+            const currentUrl = this.page.url();
+            console.log('Current URL:', currentUrl);
+
+            // Wait a moment for page to stabilize
+            await this.page.waitForTimeout(1000);
+
+            // Check if we're on login page - if so, definitely not logged in
+            if (currentUrl.includes('/login')) {
+                console.log('Still on login page - not logged in');
+                return false;
+            }
+
+            // Look for Kiri Engine specific logged-in indicators
+            const loggedInSelectors = [
+                // Kiri Engine specific selectors
+                'a[href*="logout"]',
+                'a[href*="profile"]',
+                '.user-avatar',
+                '.account-menu',
+                '.user-menu',
+                '.profile',
+                '.dashboard',
+                '.upload-area',
+                '[data-testid="user-menu"]',
+                '.avatar',
+                '.user-info',
+                // Look for Photo Scan or other main app elements
+                'div:has-text("Photo Scan")',
+                'div:has-text("Start creating")',
+                'div:has-text("Upload")',
+                '.a_l', // Photo Scan card
+                'div[data-v-07ce6356]' // Kiri Engine specific data attributes
+            ];
+
+            for (const selector of loggedInSelectors) {
+                try {
+                    const element = await this.page.$(selector);
+                    if (element) {
+                        console.log(`Found logged-in indicator: ${selector}`);
+                        return true;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // Check URL patterns for logged-in state
+            if (currentUrl.includes('/dashboard') ||
+                currentUrl.includes('/app') ||
+                currentUrl.includes('/main') ||
+                (currentUrl.includes('/webapp') && !currentUrl.includes('/login')) ||
+                currentUrl.includes('/mymodel') ||
+                currentUrl.includes('/upload')) {
+                console.log('URL indicates logged-in state');
+                return true;
+            }
+
+            // Check for absence of login form elements
+            const loginFormExists = await this.page.$('input[type="email"]') ||
+                await this.page.$('input[type="password"]') ||
+                await this.page.$('button:has-text("Log In")');
+
+            if (!loginFormExists) {
+                console.log('No login form found - likely logged in');
+                return true;
+            }
+
+            console.log('No clear logged-in indicators found');
+            return false;
+        } catch (error) {
+            console.log('Error checking login status:', error.message);
+            return false;
+        }
+    }
+
+    async configureProjectSettings() {
+        try {
+            console.log('Configuring project settings...');
+
+            // Wait for project setup page to load
+            await this.page.waitForTimeout(2000);
+
+            // Set file format to GLB using exact selectors
+            console.log('Setting file format to GLB...');
+
+            // Find the File Format section by looking for form items with "File Format" text
+            const formItems = await this.page.$$('div[data-v-955c126f].form_item');
+            let fileFormatSection = null;
+
+            for (const item of formItems) {
+                const text = await this.page.evaluate(el => el.textContent, item);
+                if (text && text.includes('File Format')) {
+                    fileFormatSection = item;
+                    console.log('File Format section found by text search');
+                    break;
+                }
+            }
+
+            // Check if dropdown is already open
+            const dropdownOpen = await this.page.$('div[data-v-955c126f].select-list_wrap.is-expanded');
+            if (!dropdownOpen) {
+                console.log('Dropdown not open, clicking to open...');
+
+                let clicked = false;
+                if (fileFormatSection) {
+                    // Try to find the k-input-wrap within the File Format section
+                    const inputWrap = await fileFormatSection.$('div[data-v-955c126f].k-input-wrap');
+                    if (inputWrap) {
+                        console.log('Found File Format input wrap, clicking...');
+                        await inputWrap.click();
+                        await this.page.waitForTimeout(1000);
+                        clicked = true;
+                    }
+                }
+
+                // Fallback: try to find any k-input-wrap that might be the file format dropdown
+                if (!clicked) {
+                    const allInputWraps = await this.page.$$('div[data-v-955c126f].k-input-wrap');
+                    for (const wrap of allInputWraps) {
+                        // Check if this input wrap contains a readonly input (dropdown indicator)
+                        const readonlyInput = await wrap.$('input[readonly]');
+                        if (readonlyInput) {
+                            console.log('Found readonly input in k-input-wrap, clicking...');
+                            await wrap.click();
+                            await this.page.waitForTimeout(1000);
+                            clicked = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!clicked) {
+                    console.log('Could not find File Format dropdown to click');
+                }
+            } else {
+                console.log('File Format dropdown is already open');
+            }
+
+            // Look for GLB option in the dropdown
+            const allOptions = await this.page.$$('li[data-v-955c126f]');
+            let glbOption = null;
+
+            for (const option of allOptions) {
+                const text = await this.page.evaluate(el => el.textContent, option);
+                if (text && text.trim() === 'GLB') {
+                    glbOption = option;
+                    console.log('GLB option found');
+                    break;
+                }
+            }
+
+            if (glbOption) {
+                await glbOption.click();
+                console.log('GLB format selected');
+                await this.page.waitForTimeout(1000);
+            } else {
+                console.log('GLB option not found in dropdown');
+            }
+
+            // Set texture resolution to 2K
+            console.log('Setting texture resolution to 2K...');
+
+            // Find texture resolution dropdown by looking for inputs with resolution values
+            const allInputs = await this.page.$$('input.k-input-inner');
+            let textureInput = null;
+
+            for (const input of allInputs) {
+                const inputText = await this.page.evaluate(el => el.value, input);
+                if (inputText && (inputText.includes('4K') || inputText.includes('2K') || inputText.includes('1K'))) {
+                    textureInput = input;
+                    console.log('Texture resolution input found');
+                    break;
+                }
+            }
+
+            if (textureInput) {
+                // Find the parent k-input-wrap div and click on it
+                const parentDiv = await this.page.evaluateHandle(input => input.closest('.k-input-wrap'), textureInput);
+                if (parentDiv) {
+                    console.log('Texture resolution dropdown found, clicking...');
+                    await parentDiv.click();
+                    await this.page.waitForTimeout(1000);
+
+                    // Look for 2K option in the dropdown
+                    const allOptions = await this.page.$$('li[data-v-955c126f]');
+                    let twoKOption = null;
+
+                    for (const option of allOptions) {
+                        const text = await this.page.evaluate(el => el.textContent, option);
+                        if (text && text.trim() === '2K') {
+                            twoKOption = option;
+                            console.log('2K option found');
+                            break;
+                        }
+                    }
+
+                    if (twoKOption) {
+                        await twoKOption.click();
+                        console.log('2K texture resolution selected');
+                        await this.page.waitForTimeout(1000);
+                    } else {
+                        console.log('2K option not found in texture resolution dropdown');
+                    }
+                } else {
+                    console.log('Texture resolution dropdown parent not found');
+                }
+            } else {
+                console.log('Texture resolution input not found');
+            }
+
+            // Set project name if needed
+            console.log('Setting project name...');
+            const nameInputSelectors = [
+                'input[placeholder*="Name"]',
+                'input[name="name"]',
+                '.k-input-inner[type="text"]',
+                'input[type="text"]'
+            ];
+
+            let nameInput = null;
+            for (const selector of nameInputSelectors) {
+                try {
+                    nameInput = await this.page.$(selector);
+                    if (nameInput) {
+                        // Check if it's the name field by looking at placeholder or nearby text
+                        const placeholder = await this.page.evaluate(el => el.placeholder, nameInput);
+                        if (placeholder && placeholder.toLowerCase().includes('name')) {
+                            console.log('Project name input found');
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (nameInput) {
+                const projectName = `3D_Model_${Date.now()}`;
+                await nameInput.click();
+                await nameInput.evaluate(input => input.value = '');
+                await nameInput.evaluate((input, value) => {
+                    input.value = value;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }, projectName);
+                console.log(`Project name set to: ${projectName}`);
+            }
+
+            // Click "Create 3D Model Now" button to start processing
+            console.log('Clicking Create 3D Model Now button...');
+            const createButtonSelectors = [
+                'button[data-v-955c126f].mask-button_hover',
+                'button.mask-button_hover',
+                'button:has-text("Create 3D Model Now")',
+                'button:has-text("Create")',
+                '.gradient-button',
+                'button[class*="gradient"]'
+            ];
+
+            let createButton = null;
+            for (const selector of createButtonSelectors) {
+                try {
+                    createButton = await this.page.$(selector);
+                    if (createButton) {
+                        const buttonText = await this.page.evaluate(el => el.textContent, createButton);
+                        if (buttonText && buttonText.includes('Create')) {
+                            console.log(`Create button found with selector: ${selector}`);
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (createButton) {
+                await createButton.click();
+                console.log('Create 3D Model Now button clicked');
+
+                // Wait for "Upload Successful" modal to appear first
+                console.log('Waiting for Upload Successful modal to appear...');
+                try {
+                    // Wait for modal with "Upload Successful" text (try multiple variations)
+                    await this.page.waitForFunction(() => {
+                        const elements = document.querySelectorAll('div, span, p, h1, h2, h3, h4, h5, h6, button');
+                        for (const el of elements) {
+                            const text = el.textContent;
+                            if (text && (
+                                text.includes('Upload Successful') ||
+                                text.includes('Upload successful') ||
+                                text.includes('Successfully uploaded') ||
+                                text.includes('Upload completed') ||
+                                text.includes('Upload Complete') ||
+                                text.includes('Uploaded successfully') ||
+                                text.includes('Files uploaded') ||
+                                text.includes('Upload finished') ||
+                                text.includes('Processing started') ||
+                                text.includes('Model creation started') ||
+                                text.includes('Creating 3D model') ||
+                                text.includes('Processing your files') ||
+                                text.includes('Upload complete')
+                            )) {
+                                console.log('Found upload success modal with text:', text);
+                                return true;
+                            }
+                        }
+                        return false;
+                    }, { timeout: 900000 }); // Wait up to 15 minutes for modal
+
+                    console.log('Upload Successful modal appeared');
+
+                    // Now wait for OK button to be present and clickable
+                    console.log('Waiting for OK button in Upload Success Modal...');
+                    const okButtonSelectors = [
+                        'button.el-button.el-button--primary',
+                        '.el-button--primary',
+                        'button[type="button"].el-button',
+                        'button.el-button'
+                    ];
+
+                    let okButton = null;
+
+                    // Wait for OK button to appear using waitForFunction
+                    await this.page.waitForFunction(() => {
+                        const selectors = [
+                            'button.el-button.el-button--primary',
+                            '.el-button--primary',
+                            'button[type="button"].el-button',
+                            'button.el-button'
+                        ];
+
+                        for (const selector of selectors) {
+                            const buttons = document.querySelectorAll(selector);
+                            for (const button of buttons) {
+                                if (button.textContent && button.textContent.trim() === 'OK') {
+                                    // Check if button is clickable
+                                    if (!button.disabled && button.offsetParent !== null) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        return false;
+                    }); // Wait indefinitely for OK button - no timeout
+
+                    console.log('OK button found in Upload Success Modal');
+
+                    // Now find and click the OK button
+                    for (const selector of okButtonSelectors) {
+                        try {
+                            const buttons = await this.page.$$(selector);
+                            for (const button of buttons) {
+                                const buttonText = await this.page.evaluate(el => el.textContent, button);
+                                if (buttonText && buttonText.trim() === 'OK') {
+                                    const isClickable = await this.page.evaluate(el => {
+                                        return !el.disabled && el.offsetParent !== null;
+                                    }, button);
+
+                                    if (isClickable) {
+                                        okButton = button;
+                                        console.log(`OK button found and clickable with selector: ${selector}`);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (okButton) break;
+                        } catch (e) {
+                            continue;
+                        }
+                    }
+
+                    if (okButton) {
+                        await okButton.click();
+                        console.log('OK button clicked - upload process completed');
+
+                        // Wait for modal to close and page to stabilize
+                        console.log('Waiting for modal to close...');
+                        await this.page.waitForTimeout(3000);
+
+                        // Navigate to home page after OK click
+                        console.log('Navigating to home page...');
+                        try {
+                            await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                waitUntil: 'networkidle2',
+                                timeout: 30000
+                            });
+                            console.log('Successfully navigated to home page');
+
+                            // Wait for home page to fully load and stabilize
+                            console.log('Waiting for home page to stabilize...');
+                            await this.page.waitForTimeout(5000);
+
+                            // Verify we're actually on the home page
+                            const currentUrl = this.page.url();
+                            console.log('Current URL after navigation:', currentUrl);
+
+                            if (!currentUrl.includes('/mymodel')) {
+                                console.log('Not on home page, attempting to navigate again...');
+                                await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                    waitUntil: 'networkidle2',
+                                    timeout: 30000
+                                });
+                                await this.page.waitForTimeout(3000);
+                            }
+
+                        } catch (navError) {
+                            console.log('Navigation to home page failed:', navError.message);
+                        }
+                    } else {
+                        console.log('OK button not found after waitForFunction');
+                        // Navigate to home page anyway
+                        console.log('Navigating to home page as fallback...');
+                        try {
+                            await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                waitUntil: 'networkidle2',
+                                timeout: 30000
+                            });
+                            console.log('Successfully navigated to home page');
+
+                            // Wait for home page to fully load and stabilize
+                            console.log('Waiting for home page to stabilize...');
+                            await this.page.waitForTimeout(5000);
+
+                        } catch (navError) {
+                            console.log('Navigation to home page failed:', navError.message);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Upload success modal or OK button did not appear within timeout:', e.message);
+                    console.log('Current page URL:', this.page.url());
+                    console.log('Current page title:', await this.page.title());
+
+                    // Check what's actually on the page
+                    const pageContent = await this.page.content();
+                    console.log('Page contains "success":', pageContent.toLowerCase().includes('success'));
+                    console.log('Page contains "upload":', pageContent.toLowerCase().includes('upload'));
+                    console.log('Page contains "complete":', pageContent.toLowerCase().includes('complete'));
+                    console.log('Page contains "processing":', pageContent.toLowerCase().includes('processing'));
+                    console.log('Page contains "model":', pageContent.toLowerCase().includes('model'));
+
+                    // Check for any modals or overlays
+                    const modals = await this.page.$$('div[class*="modal"], div[class*="overlay"], div[class*="dialog"]');
+                    console.log('Found modals/overlays:', modals.length);
+
+                    // Check for any buttons with text
+                    const buttons = await this.page.$$('button');
+                    console.log('Found buttons:', buttons.length);
+                    for (let i = 0; i < Math.min(buttons.length, 5); i++) {
+                        const buttonText = await this.page.evaluate(el => el.textContent, buttons[i]);
+                        if (buttonText && buttonText.trim()) {
+                            console.log(`Button ${i}: "${buttonText.trim()}"`);
+                        }
+                    }
+
+                    // Check if we're still on upload page
+                    const currentUrl = this.page.url();
+                    if (currentUrl.includes('/upload/')) {
+                        console.log('Still on upload page, waiting a bit more...');
+                        await this.page.waitForTimeout(5000);
+
+                        // Try to find any success indicators again
+                        const successElements = await this.page.$$('div, span, p');
+                        for (const el of successElements) {
+                            const text = await this.page.evaluate(element => element.textContent, el);
+                            if (text && (
+                                text.includes('success') ||
+                                text.includes('complete') ||
+                                text.includes('processing') ||
+                                text.includes('model')
+                            )) {
+                                console.log('Found potential success indicator:', text);
+                            }
+                        }
+                    }
+
+                    // Navigate to home page anyway
+                    console.log('Navigating to home page as fallback...');
+                    try {
+                        await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                            waitUntil: 'networkidle2',
+                            timeout: 30000
+                        });
+                        console.log('Successfully navigated to home page');
+                    } catch (navError) {
+                        console.log('Navigation to home page failed:', navError.message);
+                    }
+                }
+            } else {
+                console.log('Create button not found');
+            }
+
+            console.log('Project settings configured successfully');
+            return { success: true, message: 'Project settings configured and upload process completed' };
+
+        } catch (error) {
+            console.error('Project configuration error:', error.message);
+            return { success: false, message: `Project configuration failed: ${error.message}` };
+        }
+    }
+
+    async uploadFile(filePath) {
+        try {
+            if (!this.isLoggedIn) {
+                throw new Error('Not logged in. Please login first.');
+            }
+
+            console.log(`Uploading file: ${filePath}`);
+
+            // First, click on Photo Scan to start the upload process
+            console.log('Clicking Photo Scan to start upload process...');
+            const photoScanSelectors = [
+                'div.a_l', // Main Photo Scan card
+                'div[data-v-07ce6356].a_l',
+                '.a_l',
+                'div:has-text("Photo Scan")',
+                'div:has-text("Support photo or video upload")'
+            ];
+
+            let photoScanCard = null;
+            for (const selector of photoScanSelectors) {
+                try {
+                    photoScanCard = await this.page.$(selector);
+                    if (photoScanCard) {
+                        // Verify it's the Photo Scan card by checking the text
+                        const cardText = await this.page.evaluate(el => el.textContent, photoScanCard);
+                        if (cardText && cardText.includes('Photo Scan')) {
+                            console.log('Photo Scan card found');
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!photoScanCard) {
+                throw new Error('Could not find Photo Scan card');
+            }
+
+            // Click the Photo Scan card
+            await photoScanCard.click();
+            console.log('Photo Scan card clicked');
+            await this.page.waitForTimeout(2000);
+
+            // Now look for file upload input
+            const uploadSelectors = [
+                'input[type="file"]',
+                '.upload-area',
+                '.file-upload',
+                '[data-testid="file-upload"]',
+                '.dropzone',
+                '.upload-button',
+                '#upload-btn'
+            ];
+
+            let uploadElement = null;
+            for (const selector of uploadSelectors) {
+                try {
+                    uploadElement = await this.page.$(selector);
+                    if (uploadElement) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!uploadElement) {
+                // Try to find upload button first
+                const uploadButtonSelectors = [
+                    'button:contains("Upload")',
+                    '.upload-btn',
+                    '#upload-btn',
+                    '[data-testid="upload"]',
+                    'button:contains("Add")',
+                    'button:contains("New")'
+                ];
+
+                for (const selector of uploadButtonSelectors) {
+                    try {
+                        const button = await this.page.$(selector);
+                        if (button) {
+                            await button.click();
+                            await this.page.waitForTimeout(2000);
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                // Try to find file input again
+                for (const selector of uploadSelectors) {
+                    try {
+                        uploadElement = await this.page.$(selector);
+                        if (uploadElement) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            }
+
+            if (!uploadElement) {
+                throw new Error('Could not find file upload element after clicking Photo Scan');
+            }
+
+            // Upload the file
+            await uploadElement.uploadFile(filePath);
+            console.log('File uploaded successfully');
+
+            // Wait for upload to complete and project settings to appear
+            console.log('Waiting for project settings to appear on the upload page...');
+            // Removed timeout - let the upload complete naturally
+
+            // Configure project settings directly on the upload page
+            console.log('Configuring project settings on the upload page...');
+            await this.configureProjectSettings();
+
+            // Look for processing indicators
+            const processingSelectors = [
+                '.processing',
+                '.loading',
+                '.progress',
+                '[data-testid="processing"]',
+                '.spinner',
+                '.upload-progress'
+            ];
+
+            let processingStarted = false;
+            for (const selector of processingSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 5000 });
+                    processingStarted = true;
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!processingStarted) {
+                console.log('Processing indicators not found, but upload may have succeeded');
+            }
+
+            return { success: true, message: 'File uploaded and processing started' };
+
+        } catch (error) {
+            console.error('Upload error:', error.message);
+            return { success: false, message: `Upload failed: ${error.message}` };
+        }
+    }
+
+    async uploadMultipleFiles(filePaths) {
+        try {
+            if (!this.isLoggedIn) {
+                throw new Error('Not logged in. Please login first.');
+            }
+
+            console.log(`Uploading ${filePaths.length} files`);
+
+            // First, click on Photo Scan to start the upload process
+            console.log('Clicking Photo Scan to start upload process...');
+            const photoScanSelectors = [
+                'div.a_l', // Main Photo Scan card
+                'div[data-v-07ce6356].a_l',
+                '.a_l',
+                'div:has-text("Photo Scan")',
+                'div:has-text("Support photo or video upload")'
+            ];
+
+            let photoScanCard = null;
+            for (const selector of photoScanSelectors) {
+                try {
+                    photoScanCard = await this.page.$(selector);
+                    if (photoScanCard) {
+                        // Verify it's the Photo Scan card by checking the text
+                        const cardText = await this.page.evaluate(el => el.textContent, photoScanCard);
+                        if (cardText && cardText.includes('Photo Scan')) {
+                            console.log('Photo Scan card found');
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!photoScanCard) {
+                throw new Error('Could not find Photo Scan card');
+            }
+
+            // Click the Photo Scan card
+            await photoScanCard.click();
+            console.log('Photo Scan card clicked');
+            await this.page.waitForTimeout(2000);
+
+            // Now look for file upload input
+            const uploadSelectors = [
+                'input[type="file"]',
+                '.upload-area',
+                '.file-upload',
+                '[data-testid="file-upload"]',
+                '.dropzone',
+                '.upload-button',
+                '#upload-btn'
+            ];
+
+            let uploadElement = null;
+            for (const selector of uploadSelectors) {
+                try {
+                    uploadElement = await this.page.$(selector);
+                    if (uploadElement) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!uploadElement) {
+                // Try to find upload button first
+                const uploadButtonSelectors = [
+                    'button:contains("Upload")',
+                    '.upload-btn',
+                    '#upload-btn',
+                    '[data-testid="upload"]',
+                    'button:contains("Add")',
+                    'button:contains("New")'
+                ];
+
+                for (const selector of uploadButtonSelectors) {
+                    try {
+                        const button = await this.page.$(selector);
+                        if (button) {
+                            await button.click();
+                            await this.page.waitForTimeout(2000);
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                // Try to find file input again
+                for (const selector of uploadSelectors) {
+                    try {
+                        uploadElement = await this.page.$(selector);
+                        if (uploadElement) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            }
+
+            if (!uploadElement) {
+                throw new Error('Could not find file upload element after clicking Photo Scan');
+            }
+
+            // Upload all files at once
+            await uploadElement.uploadFile(...filePaths);
+            console.log(`${filePaths.length} files uploaded successfully`);
+
+            // Wait for upload to complete and project settings to appear
+            console.log('Waiting for project settings to appear on the upload page...');
+            // Removed timeout - let the upload complete naturally
+
+            // Configure project settings directly on the upload page
+            console.log('Configuring project settings on the upload page...');
+            await this.configureProjectSettings();
+
+            // Look for processing indicators
+            const processingSelectors = [
+                '.processing',
+                '.loading',
+                '.progress',
+                '[data-testid="processing"]',
+                '.spinner',
+                '.upload-progress'
+            ];
+
+            let processingStarted = false;
+            for (const selector of processingSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 5000 });
+                    processingStarted = true;
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!processingStarted) {
+                console.log('Processing indicators not found, but upload may have succeeded');
+            }
+
+            return { success: true, message: `${filePaths.length} files uploaded and processing started` };
+
+        } catch (error) {
+            console.error('Upload error:', error.message);
+            return { success: false, message: `Upload failed: ${error.message}` };
+        }
+    }
+
+    async waitForProcessing(timeout = 300000) {
+        try {
+            console.log('Waiting for processing to complete...');
+
+            const startTime = Date.now();
+            const checkInterval = 5000; // Check every 5 seconds
+
+            while (Date.now() - startTime < timeout) {
+                // Look for completion indicators
+                const completionSelectors = [
+                    '.processing-complete',
+                    '.done',
+                    '.success',
+                    '[data-testid="complete"]',
+                    '.download-ready',
+                    '.model-ready'
+                ];
+
+                let isComplete = false;
+                for (const selector of completionSelectors) {
+                    try {
+                        const element = await this.page.$(selector);
+                        if (element) {
+                            console.log('Processing complete!');
+                            isComplete = true;
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (isComplete) {
+                    return { success: true, message: 'Processing completed successfully' };
+                }
+
+                // Check for error indicators
+                const errorSelectors = [
+                    '.error',
+                    '.failed',
+                    '.processing-error',
+                    '[data-testid="error"]'
+                ];
+
+                for (const selector of errorSelectors) {
+                    try {
+                        const element = await this.page.$(selector);
+                        if (element) {
+                            const errorText = await this.page.evaluate(el => el.textContent, element);
+                            return { success: false, message: `Processing failed: ${errorText}` };
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                console.log('Processing still in progress...');
+                await this.page.waitForTimeout(checkInterval);
+            }
+
+            return { success: false, message: 'Processing timeout - taking longer than expected' };
+
+        } catch (error) {
+            console.error('Error waiting for processing:', error.message);
+            return { success: false, message: `Error waiting for processing: ${error.message}` };
+        }
+    }
+
+    async waitForProjectCompletionAndExport() {
+        try {
+            console.log('Waiting for project to complete processing...');
+
+            // Wait for the page to redirect back to home after OK button click
+            await this.page.waitForTimeout(3000);
+
+            // Poll for project completion with page reloads
+            const maxAttempts = 150; //setting max attempts on reloading the page 
+            let attempts = 0;
+            let projectReady = false;
+
+            while (attempts < maxAttempts && !projectReady) {
+                attempts++;
+                console.log(`Checking project status (attempt ${attempts}/${maxAttempts})...`);
+
+                // Reload the page to get updated project status
+                if (attempts > 1) {
+                    console.log('Reloading page to check project status...');
+                    await this.page.reload({ waitUntil: 'networkidle2' });
+                    await this.page.waitForTimeout(2000);
+                }
+
+                // Look for project card and check if it's ready
+                const projectCardSelectors = [
+                    'div[data-v-d562c7af].model-cover',
+                    '.model-cover',
+                    'div[class*="card"]',
+                    'div[class*="project"]'
+                ];
+
+                let projectCard = null;
+                for (const selector of projectCardSelectors) {
+                    try {
+                        projectCard = await this.page.$(selector);
+                        if (projectCard) {
+                            console.log(`Project card found with selector: ${selector}`);
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (!projectCard) {
+                    // Try to find any project card by looking for images or project-related elements
+                    const allCards = await this.page.$$('div[class*="card"], div[class*="project"], div[class*="model"]');
+                    for (const card of allCards) {
+                        const text = await this.page.evaluate(el => el.textContent, card);
+                        if (text && (text.includes('Project') || text.includes('Photo Scan'))) {
+                            projectCard = card;
+                            console.log('Project card found by text content');
+                            break;
+                        }
+                    }
+                }
+
+                if (projectCard) {
+                    // Check if project is ready (not queuing/processing)
+                    const cardText = await this.page.evaluate(el => el.textContent, projectCard);
+                    const isProcessing = cardText && (cardText.includes('Queuing') || cardText.includes('Processing') || cardText.includes('...'));
+
+                    if (!isProcessing) {
+                        console.log('Project appears to be ready! Attempting to click...');
+                        projectReady = true;
+
+                        // Try to click the project card
+                        try {
+                            await projectCard.click();
+                            console.log('Project card clicked - navigating to model view');
+                            await this.page.waitForTimeout(3000);
+                            break;
+                        } catch (e) {
+                            console.log('Failed to click project card, will retry...');
+                            projectReady = false;
+                        }
+                    } else {
+                        console.log(`Project still processing: ${cardText}`);
+                    }
+                } else {
+                    console.log('Project card not found, will retry...');
+                }
+
+                if (!projectReady) {
+                    console.log(`Waiting 5 seconds before next check... (${attempts}/${maxAttempts})`);
+                    await this.page.waitForTimeout(5000);
+                }
+            }
+
+            if (!projectReady) {
+                throw new Error('Project did not complete processing within the expected time');
+            }
+
+            // Wait for model view page to load
+            console.log('Waiting for model view page to load...');
+            await this.page.waitForTimeout(2000);
+
+            // Click the Export button
+            console.log('Looking for Export button...');
+            const exportButtonSelectors = [
+                'button[data-v-2e999170].h-btn',
+                'button.h-btn',
+                'button[class*="export"]',
+                'button[class*="btn"]'
+            ];
+
+            let exportButton = null;
+            for (const selector of exportButtonSelectors) {
+                try {
+                    const buttons = await this.page.$$(selector);
+                    for (const button of buttons) {
+                        const buttonText = await this.page.evaluate(el => el.textContent, button);
+                        if (buttonText && buttonText.includes('Export')) {
+                            exportButton = button;
+                            console.log(`Export button found with selector: ${selector}`);
+                            break;
+                        }
+                    }
+                    if (exportButton) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (exportButton) {
+                await exportButton.click();
+                console.log('Export button clicked - waiting for export modal...');
+
+                // Wait for export modal to appear
+                console.log('Waiting for export modal to appear...');
+                try {
+                    await this.page.waitForSelector('button[data-v-af1943bc].download-btn.mask-button_hover.l-h-btn', { timeout: 10000 });
+                    console.log('Export modal appeared');
+                } catch (e) {
+                    console.log('Export modal not found with specific selector, trying alternative approach...');
+                    await this.page.waitForTimeout(3000);
+                }
+
+                // Wait for export modal and click Download button
+                console.log('Looking for Download button in export modal...');
+                const downloadButtonSelectors = [
+                    'button[data-v-af1943bc].download-btn.mask-button_hover.l-h-btn',
+                    'button.download-btn.mask-button_hover.l-h-btn',
+                    'button.download-btn.mask-button_hover',
+                    'button[class*="download"]',
+                    'button[class*="btn"]'
+                ];
+
+                let downloadButton = null;
+
+                // First try the specific selectors
+                for (const selector of downloadButtonSelectors) {
+                    try {
+                        const buttons = await this.page.$$(selector);
+                        for (const button of buttons) {
+                            const buttonText = await this.page.evaluate(el => el.textContent, button);
+                            if (buttonText && buttonText.includes('Download')) {
+                                downloadButton = button;
+                                console.log(`Download button found with selector: ${selector}`);
+                                break;
+                            }
+                        }
+                        if (downloadButton) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                // If not found with specific selectors, try finding by text content
+                if (!downloadButton) {
+                    console.log('Download button not found with specific selectors, trying text-based search...');
+                    try {
+                        const allButtons = await this.page.$$('button');
+                        for (const button of allButtons) {
+                            const buttonText = await this.page.evaluate(el => el.textContent, button);
+                            if (buttonText && buttonText.trim() === 'Download') {
+                                downloadButton = button;
+                                console.log('Download button found by text content');
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        console.log('Error in text-based search:', e.message);
+                    }
+                }
+
+                if (downloadButton) {
+                    // Set up download behavior before clicking
+                    console.log('Setting up download behavior...');
+                    try {
+                        // Try the newer CDP method first
+                        const client = await this.page.target().createCDPSession();
+                        // Use default system download directory
+                        const os = require('os');
+                        const defaultDownloadDir = path.join(os.homedir(), 'Downloads');
+
+                        await client.send('Page.setDownloadBehavior', {
+                            behavior: 'allow',
+                            downloadPath: defaultDownloadDir
+                        });
+                        console.log('Download behavior set to default directory:', defaultDownloadDir);
+
+                        // Additional Chrome-specific download settings
+                        if (this.browserType === 'chrome') {
+                            await client.send('Page.setDownloadBehavior', {
+                                behavior: 'allow',
+                                downloadPath: defaultDownloadDir
+                            });
+                            console.log('Chrome download behavior configured with default path:', defaultDownloadDir);
+                        }
+                    } catch (cdpError) {
+                        console.log('CDP method failed, trying alternative approach:', cdpError.message);
+                        // Fallback: just proceed without setting download behavior
+                        console.log('Proceeding without explicit download path setting');
+                    }
+
+                    // Set up download event listeners before clicking
+                    let downloadStarted = false;
+                    let downloadFinished = false;
+
+                    // Listen for download events
+                    this.page.on('response', async (response) => {
+                        const url = response.url();
+                        if (url.includes('download') || url.includes('.zip') || url.includes('.glb')) {
+                            console.log('Download response detected:', url);
+                            downloadStarted = true;
+                        }
+                    });
+
+                    await downloadButton.click();
+                    console.log('Download button clicked - 3D model download started');
+
+                    // Wait for download to actually complete by monitoring download events
+                    console.log('Waiting for download to complete...');
+                    let downloadCompleted = false;
+                    let downloadTimeout = 0;
+                    const maxDownloadTimeout = 120000; // 2 minutes max
+
+                    // Get initial file count in default downloads directory
+                    const fs = require('fs');
+                    const path = require('path');
+                    const os = require('os');
+                    const downloadsDir = path.join(os.homedir(), 'Downloads');
+
+                    // Ensure downloads directory exists
+                    if (!fs.existsSync(downloadsDir)) {
+                        fs.mkdirSync(downloadsDir, { recursive: true });
+                    }
+
+                    const initialFiles = fs.readdirSync(downloadsDir);
+                    console.log(`Monitoring downloads in: ${downloadsDir}`);
+                    console.log(`Initial files in downloads directory: ${initialFiles.length}`);
+
+                    // Monitor for download completion
+                    while (!downloadCompleted && downloadTimeout < maxDownloadTimeout) {
+                        try {
+                            // Check if new files appeared in downloads directory
+                            const currentFiles = fs.readdirSync(downloadsDir);
+                            if (currentFiles.length > initialFiles.length) {
+                                console.log('New files detected in downloads directory!');
+                                const newFiles = currentFiles.filter(file => !initialFiles.includes(file));
+                                console.log('Downloaded files:', newFiles);
+
+                                // Check if files are actually complete (not just created)
+                                let allFilesComplete = true;
+                                for (const file of newFiles) {
+                                    const filePath = path.join(downloadsDir, file);
+                                    const stats = fs.statSync(filePath);
+
+                                    // Check if file is still being written (size is 0 or very small)
+                                    if (stats.size < 1024) { // Less than 1KB
+                                        console.log(`File ${file} is still being written (${stats.size} bytes)`);
+                                        allFilesComplete = false;
+                                        break;
+                                    }
+
+                                    // Check if file was modified recently (within last 5 seconds)
+                                    const now = Date.now();
+                                    const fileModified = stats.mtime.getTime();
+                                    if (now - fileModified < 5000) {
+                                        console.log(`File ${file} was modified recently, still downloading...`);
+                                        allFilesComplete = false;
+                                        break;
+                                    }
+                                }
+
+                                if (allFilesComplete) {
+                                    console.log('All files appear to be complete');
+                                    downloadCompleted = true;
+                                    break;
+                                }
+                            }
+
+                            // Check if download is complete by looking for download indicators
+                            const downloadIndicators = await this.page.evaluate(() => {
+                                // Look for download completion indicators on the page
+                                const indicators = [
+                                    'Download complete',
+                                    'Download finished',
+                                    'Download successful',
+                                    'File downloaded',
+                                    'Downloaded successfully'
+                                ];
+
+                                const pageText = document.body.textContent.toLowerCase();
+                                return indicators.some(indicator =>
+                                    pageText.includes(indicator.toLowerCase())
+                                );
+                            });
+
+                            if (downloadIndicators) {
+                                console.log('Download completion indicators found');
+                                downloadCompleted = true;
+                                break;
+                            }
+
+                            // Check if download button is still present (indicates download in progress)
+                            const downloadButtonStillPresent = await this.page.evaluate(() => {
+                                const buttons = document.querySelectorAll('button');
+                                for (const button of buttons) {
+                                    const text = button.textContent;
+                                    if (text && text.includes('Download')) {
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+
+                            if (!downloadButtonStillPresent) {
+                                console.log('Download button disappeared - download may be complete');
+                                downloadCompleted = true;
+                                break;
+                            }
+
+                            // Wait a bit before checking again
+                            await this.page.waitForTimeout(2000);
+                            downloadTimeout += 2000;
+
+                        } catch (e) {
+                            console.log('Error checking download status:', e.message);
+                            await this.page.waitForTimeout(2000);
+                            downloadTimeout += 2000;
+                        }
+                    }
+
+                    if (downloadCompleted) {
+                        console.log('Download completed successfully');
+
+                        // Verify files are actually downloaded and accessible
+                        const finalFiles = fs.readdirSync(downloadsDir);
+                        const downloadedFiles = finalFiles.filter(file => !initialFiles.includes(file));
+
+                        if (downloadedFiles.length > 0) {
+                            console.log('Successfully downloaded files:');
+                            for (const file of downloadedFiles) {
+                                const filePath = path.join(downloadsDir, file);
+                                const stats = fs.statSync(filePath);
+                                console.log(`- ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+                            }
+                        } else {
+                            console.log('Warning: No new files found in downloads directory');
+                        }
+                    } else {
+                        console.log('Download timeout reached - checking for partial downloads...');
+
+                        // Check for any files that might have been downloaded
+                        const finalFiles = fs.readdirSync(downloadsDir);
+                        const downloadedFiles = finalFiles.filter(file => !initialFiles.includes(file));
+
+                        if (downloadedFiles.length > 0) {
+                            console.log('Found partial downloads:');
+                            for (const file of downloadedFiles) {
+                                const filePath = path.join(downloadsDir, file);
+                                const stats = fs.statSync(filePath);
+                                console.log(`- ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+                            }
+                        }
+                    }
+
+                    // Additional wait to ensure download is fully processed
+                    console.log('Ensuring download is fully processed...');
+                    await this.page.waitForTimeout(10000); // Increased to 10 seconds
+
+                    // Close browser after download is complete
+                    console.log('Download process completed - closing browser...');
+                    await this.close();
+
+                    return { success: true, message: '3D model export and download completed' };
+                } else {
+                    console.log('Download button not found in export modal');
+                    return { success: false, message: 'Download button not found' };
+                }
+            } else {
+                console.log('Export button not found');
+                return { success: false, message: 'Export button not found' };
+            }
+
+        } catch (error) {
+            console.error('Export process error:', error.message);
+            return { success: false, message: `Export process failed: ${error.message}` };
+        }
+    }
+
+    /**
+     * Start the 5-second page reload cycle for monitoring processes
+     */
+    async startPageReloadCycle() {
+        try {
+            console.log('Starting page reload cycle...');
+
+            if (this.reloadInterval) {
+                console.log('Reload cycle already running, stopping existing one first...');
+                this.stopPageReloadCycle();
+            }
+
+            // Start the reload cycle
+            this.reloadInterval = setInterval(async () => {
+                await this.performPageReload();
+            }, 5000);
+
+            console.log('Page reload cycle started (5-second intervals)');
+
+            // Perform initial reload immediately
+            await this.performPageReload();
+
+        } catch (error) {
+            console.error('Error starting page reload cycle:', error.message);
+        }
+    }
+
+    /**
+     * Stop the page reload cycle
+     */
+    stopPageReloadCycle() {
+        try {
+            if (this.reloadInterval) {
+                clearInterval(this.reloadInterval);
+                this.reloadInterval = null;
+                console.log('Page reload cycle stopped');
+            }
+        } catch (error) {
+            console.error('Error stopping page reload cycle:', error.message);
+        }
+    }
+
+    /**
+     * Perform a single page reload and check for processes
+     */
+    async performPageReload() {
+        try {
+            if (this.isReloading) {
+                console.log('Reload already in progress, skipping...');
+                return;
+            }
+
+            if (!this.page || !this.isLoggedIn) {
+                console.log('Page not ready or not logged in, cannot reload');
+                return;
+            }
+
+            this.isReloading = true;
+            console.log('🔄 Performing page reload to check for new processes...');
+
+            // Reload the page to get updated project status
+            await this.page.reload({ waitUntil: 'networkidle2' });
+            await this.page.waitForTimeout(2000);
+
+            // Check if we're still logged in after reload
+            const stillLoggedIn = await this.checkLoginStatus();
+            if (!stillLoggedIn) {
+                console.log('❌ No longer logged in after reload, stopping reload cycle...');
+                this.stopPageReloadCycle();
+                return;
+            }
+
+            // Get all project cards
+            const projectCards = await this.page.$$('div[data-v-d562c7af].model-cover, .model-cover, div[class*="card"], div[class*="project"]');
+            console.log(`Found ${projectCards.length} total project cards`);
+
+            // If we don't have a tracked project yet, look for a new processing one
+            if (!this.trackedProjectId) {
+                console.log('No tracked project, looking for new processing project...');
+                for (const card of projectCards) {
+                    const projectTitle = await this.page.evaluate(el => {
+                        const titleEl = el.querySelector('.title') || el.querySelector('.name');
+                        return titleEl ? titleEl.textContent.trim() : null;
+                    }, card);
+
+                    const statusMask = await card.$('.status-mask');
+                    if (statusMask) {
+                        const statusText = await this.page.evaluate(el => {
+                            const span = el.querySelector('.status span');
+                            return span ? span.textContent.trim() : '';
+                        }, statusMask);
+
+                        if (statusText.includes('Processing') || statusText.includes('Queuing')) {
+                            this.trackedProjectId = projectTitle || `Project_${Date.now()}`;
+                            this.trackedProjectTitle = projectTitle;
+                            console.log('🆕 Found new project to track:', this.trackedProjectId);
+                            console.log('Status:', statusText);
+
+                            if (global.io) {
+                                global.io.emit('reload-status', {
+                                    timestamp: new Date().toISOString(),
+                                    hasNewProcesses: true,
+                                    processStatus: `Started tracking new project "${this.trackedProjectId}"`,
+                                    projectCount: projectCards.length
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            // If we have a tracked project, check its status
+            else {
+                console.log('Checking tracked project:', this.trackedProjectId);
+                let foundTrackedProject = false;
+                let hasStatusMask = false;
+
+                for (const card of projectCards) {
+                    const projectTitle = await this.page.evaluate(el => {
+                        const titleEl = el.querySelector('.title') || el.querySelector('.name');
+                        return titleEl ? titleEl.textContent.trim() : null;
+                    }, card);
+
+                    if (projectTitle === this.trackedProjectTitle) {
+                        foundTrackedProject = true;
+                        const statusMask = await card.$('.status-mask');
+
+                        if (statusMask) {
+                            hasStatusMask = true;
+                            const statusText = await this.page.evaluate(el => {
+                                const span = el.querySelector('.status span');
+                                return span ? span.textContent.trim() : '';
+                            }, statusMask);
+                            console.log('Tracked project status:', statusText);
+
+                            if (global.io) {
+                                global.io.emit('reload-status', {
+                                    timestamp: new Date().toISOString(),
+                                    hasNewProcesses: true,
+                                    processStatus: `Tracked project "${this.trackedProjectId}" status: ${statusText}`,
+                                    projectCount: projectCards.length
+                                });
+                            }
+                        } else {
+                            // Project has completed! Stop monitoring and start export
+                            console.log('🎉 Tracked project has completed:', this.trackedProjectId);
+
+                            if (global.io) {
+                                global.io.emit('reload-status', {
+                                    timestamp: new Date().toISOString(),
+                                    hasNewProcesses: false,
+                                    processStatus: `Project "${this.trackedProjectId}" completed!`,
+                                    projectCount: projectCards.length
+                                });
+                            }
+
+                            // Stop the monitoring cycle
+                            this.stopPageReloadCycle();
+
+                            // Clear tracking info
+                            await this.page.evaluate(() => {
+                                localStorage.removeItem('kiri_monitoring_active');
+                                localStorage.removeItem('kiri_scan_start_time');
+                            });
+
+                            // Click this specific card
+                            await card.click();
+                            console.log('Clicked completed project card');
+                            await this.page.waitForTimeout(2000);
+
+                            // Start export process
+                            await this.waitForProjectCompletionAndExport();
+                            return;
+                        }
+                        break;
+                    }
+                }
+
+                if (!foundTrackedProject) {
+                    console.log('⚠️ Could not find tracked project:', this.trackedProjectId);
+                    // Keep monitoring in case the page hasn't fully loaded
+                }
+            }
+
+        } catch (error) {
+            console.error('Error during page reload:', error.message);
+        } finally {
+            this.isReloading = false;
+        }
+    }
+
+    /**
+     * Check for processing projects using the specific selector
+     */
+    async checkForProcessingProjects() {
+        try {
+            if (!this.page || !this.isLoggedIn) {
+                return { hasProcessingProjects: false, message: 'Page not ready or not logged in' };
+            }
+
+            console.log('🔍 Checking for processing projects...');
+
+            // Look for the specific processing status elements
+            const processingElements = await this.page.$$('div[data-v-d562c7af] .status-mask .status span');
+
+            if (processingElements.length > 0) {
+                for (const element of processingElements) {
+                    const statusText = await this.page.evaluate(el => el.textContent, element);
+
+                    // Check if the text is exactly "Processing.." (note the two dots)
+                    if (statusText && statusText.trim() === 'Processing..') {
+                        console.log('✅ Found project with "Processing.." status');
+                        return {
+                            hasProcessingProjects: true,
+                            message: 'Found project with "Processing.." status',
+                            statusText: statusText
+                        };
+                    }
+                }
+            }
+
+            console.log('❌ No processing projects found');
+            return {
+                hasProcessingProjects: false,
+                message: 'No processing projects found'
+            };
+
+        } catch (error) {
+            console.error('Error checking for processing projects:', error.message);
+            return {
+                hasProcessingProjects: false,
+                message: `Error: ${error.message}`
+            };
+        }
+    }
+
+
+    async close() {
+        try {
+            // Stop the reload cycle first
+            this.stopPageReloadCycle();
+
+            if (this.page) {
+                await this.page.close();
+            }
+            if (this.browser) {
+                await this.browser.close();
+            }
+            console.log('Browser closed');
+        } catch (error) {
+            console.error('Error closing browser:', error.message);
+        }
+    }
+}
+
+module.exports = KiriEngineAutomation;
