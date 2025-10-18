@@ -1799,6 +1799,12 @@ class KiriEngineAutomation {
 
                     // Close browser after download is complete
                     console.log('Download process completed - closing browser...');
+                    
+                    // Emit progress event for completion
+                    if (global.io) {
+                        global.io.emit('progress', { step: 'complete', message: '3D model download completed successfully!' });
+                    }
+                    
                     await this.close();
 
                     return { success: true, message: '3D model export and download completed' };
@@ -1922,6 +1928,13 @@ class KiriEngineAutomation {
                                     processStatus: `Started tracking new project "${this.trackedProjectId}"`,
                                     projectCount: projectCards.length
                                 });
+
+                                // Emit progress event for processing step
+                                if (statusText.includes('Processing')) {
+                                    console.log('🚀 EMITTING PROCESSING PROGRESS EVENT');
+                                    global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
+                                    console.log('🚀 PROCESSING PROGRESS EVENT EMITTED');
+                                }
                             }
                             break;
                         }
@@ -1959,6 +1972,13 @@ class KiriEngineAutomation {
                                     processStatus: `Tracked project "${this.trackedProjectId}" status: ${statusText}`,
                                     projectCount: projectCards.length
                                 });
+
+                                // Emit progress event when tracked project status is "Processing.."
+                                if (statusText.includes('Processing')) {
+                                    console.log('🚀 EMITTING PROCESSING PROGRESS EVENT FOR TRACKED PROJECT');
+                                    global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
+                                    console.log('🚀 PROCESSING PROGRESS EVENT EMITTED FOR TRACKED PROJECT');
+                                }
                             }
                         } else {
                             // Project has completed! Stop monitoring and start export
@@ -1971,6 +1991,9 @@ class KiriEngineAutomation {
                                     processStatus: `Project "${this.trackedProjectId}" completed!`,
                                     projectCount: projectCards.length
                                 });
+
+                                // Emit progress event for download step
+                                global.io.emit('progress', { step: 'download', message: 'Downloading 3D model files...' });
                             }
 
                             // Stop the monitoring cycle

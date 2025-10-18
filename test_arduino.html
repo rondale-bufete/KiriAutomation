@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Arduino Port Detection</title>
+</head>
+<body>
+    <h1>Testing Arduino Port Detection</h1>
+    <div id="test-status">Loading...</div>
+
+    <!-- Load Socket.IO client -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- Load the Arduino port detection script -->
+    <script src="/arduino-port.js"></script>
+
+    <script>
+        // Test if the script loads without errors
+        window.addEventListener('DOMContentLoaded', function() {
+            const statusDiv = document.getElementById('test-status');
+            if (window.arduinoPortManager) {
+                statusDiv.innerHTML = '✅ Arduino port detection script loaded successfully!';
+            } else {
+                statusDiv.innerHTML = '❌ Failed to load Arduino port detection script';
+            }
+        });
+    </script>
+</body>
+</html>

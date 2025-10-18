@@ -8,6 +8,7 @@ const fs = require('fs-extra');
 const { Server } = require('socket.io');
 const http = require('http');
 const KiriEngineAutomation = require('./kiri-automation');
+const ArduinoPortMonitor = require('./arduino-port-monitor');
 const config = require('./config');
 
 // Debug configuration loading
@@ -240,6 +241,9 @@ app.post('/api/login-automation', async (req, res) => {
       });
     }
 
+    // Emit progress update for authentication step
+    io.emit('progress', { step: 'login', message: 'Logging in to Kiri Engine...' });
+
     // Close existing automation if it exists
     if (automation) {
       console.log('Closing existing automation instance...');
@@ -268,6 +272,9 @@ app.post('/api/login-automation', async (req, res) => {
 
     if (loginResult.success) {
       console.log('Kiri Engine login successful via automation');
+
+      // Emit progress update for capturing step
+      io.emit('progress', { step: 'upload', message: 'Capturing photos with turntable rotation...' });
 
       // Start the 5-second page reload cycle for monitoring
       console.log('Starting page reload cycle after successful login...');
@@ -482,9 +489,35 @@ app.get('/api/check-processes', async (req, res) => {
 // Make Socket.IO available globally for the automation class
 global.io = io;
 
+// Initialize turntable port monitoring
+const arduinoMonitor = new ArduinoPortMonitor(io);
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected');
+
+  // Handle turntable port listing request
+  socket.on('list-ports', () => {
+    console.log('Client requested turntable port list');
+    arduinoMonitor.checkPorts();
+  });
+
+  // Handle turntable command requests
+  socket.on('turntable-command', (data) => {
+    console.log('🎠 SERVER: Received turntable command:', data.command);
+    console.log('🎠 SERVER: Arduino monitor exists:', !!arduinoMonitor);
+    console.log('🎠 SERVER: Arduino monitor connected:', arduinoMonitor.isConnected);
+    
+    const success = arduinoMonitor.sendCommand(data.command);
+    console.log('🎠 SERVER: Command send result:', success);
+    
+    // Send response back to client
+    socket.emit('turntable-command-response', {
+      command: data.command,
+      success: success,
+      message: success ? 'Command sent successfully' : 'Failed to send command'
+    });
+  });
 
   socket.on('disconnect', () => {
     console.log('Client disconnected');
@@ -496,6 +529,9 @@ process.on('SIGINT', async () => {
   console.log('Shutting down gracefully...');
   if (automation) {
     await automation.close();
+  }
+  if (arduinoMonitor) {
+    arduinoMonitor.cleanup();
   }
   process.exit(0);
 });
