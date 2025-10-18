@@ -208,8 +208,8 @@ class Scanner {
             console.log('Turntable rotation will be controlled by the scanning pipeline');
 
             // Start monitoring for project cards
-            this.showStatus('info', 'Page reload monitoring started automatically');
-            this.startMonitoring();
+                this.showStatus('info', 'Page reload monitoring started automatically');
+                this.startMonitoring();
 
         } catch (error) {
             console.error('Error in startLiveScanning:', error);
@@ -912,46 +912,57 @@ class Scanner {
     initializeSocketConnection() {
         try {
             console.log('🔌 Initializing Socket.IO connection...');
-            this.socket = io();
-            
-            // Set up event listeners
-            this.socket.on('connect', () => {
-                console.log('🔌 Socket.IO connected successfully');
-            });
+                this.socket = io();
 
-            this.socket.on('disconnect', () => {
+            // Set up event listeners
+                this.socket.on('connect', () => {
+                console.log('🔌 Socket.IO connected successfully');
+                });
+
+                this.socket.on('disconnect', () => {
                 console.log('🔌 Socket.IO disconnected');
             });
 
             this.socket.on('reload-status', (data) => {
                 console.log('Received reload status update:', data);
                 this.updateMonitoringStatus(data);
-            });
+                });
 
-            // Listen for Arduino port updates
-            this.socket.on('arduino-ports-list', (data) => {
-                console.log('Received Arduino ports list:', data);
-                this.updatePortStatus(data);
-            });
+                // Listen for Arduino port updates
+                this.socket.on('arduino-ports-list', (data) => {
+                    console.log('Received Arduino ports list:', data);
+                    this.updatePortStatus(data);
+                });
 
-            this.socket.on('arduino-port-connected', (data) => {
-                console.log('Arduino connected:', data);
-                this.updatePortConnectionStatus(data, true);
-            });
+                this.socket.on('arduino-port-connected', (data) => {
+                    console.log('Arduino connected:', data);
+                    this.updatePortConnectionStatus(data, true);
+                });
 
-            this.socket.on('arduino-port-disconnected', (data) => {
-                console.log('Arduino disconnected:', data);
-                this.updatePortConnectionStatus(data, false);
-            });
+                this.socket.on('arduino-port-disconnected', (data) => {
+                    console.log('Arduino disconnected:', data);
+                    this.updatePortConnectionStatus(data, false);
+                });
 
-            this.socket.on('arduino-data', (data) => {
-                console.log('Received Arduino data:', data);
-                this.handleArduinoData(data);
-            });
+                this.socket.on('arduino-data', (data) => {
+                    console.log('Received Arduino data:', data);
+                    this.handleArduinoData(data);
+                });
 
             this.socket.on('port-error', (data) => {
                 console.error('Arduino port error:', data);
                 this.showStatus('error', 'Arduino port error: ' + data.message);
+            });
+
+            // Listen for remote scan triggers from CI4
+            this.socket.on('remote-scan-trigger', (data) => {
+                console.log('🌐 SCANNING: Remote scan trigger received:', data);
+                this.showStatus('info', 'Remote scan triggered from CI4 app');
+                
+                // Automatically start the scanning process
+                setTimeout(() => {
+                    this.startLiveScanning();
+                }, 1000);
             });
 
             // Listen for progress events (same as upload pipeline)
@@ -1616,7 +1627,7 @@ class Scanner {
 
             if (result.success) {
                 console.log('✅ Download completed successfully via backend!');
-                this.showStatus('success', 'Download completed! 3D model saved to Downloads folder.');
+                this.showStatus('success', 'Download completed! 3D model saved to app downloads folder.');
 
                 // Clear project completion flag
                 localStorage.removeItem('kiri_project_completion_active');

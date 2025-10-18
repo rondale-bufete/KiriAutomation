@@ -31,6 +31,283 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
+// Ensure downloads directory exists
+const downloadsDir = path.join(__dirname, 'downloads');
+fs.ensureDirSync(downloadsDir);
+
+// Serve files from downloads directory
+app.use('/downloads', express.static('downloads'));
+
+// Serve files from extracted directory
+app.use('/extracted', express.static('extracted'));
+
+// API endpoint to list downloaded files
+app.get('/api/downloads', (req, res) => {
+  try {
+    const downloadsDir = path.join(__dirname, 'downloads');
+    
+    // Check if downloads directory exists
+    if (!fs.existsSync(downloadsDir)) {
+      return res.json({ success: true, files: [] });
+    }
+    
+    const files = fs.readdirSync(downloadsDir)
+      .filter(file => {
+        const filePath = path.join(downloadsDir, file);
+        return fs.statSync(filePath).isFile();
+      })
+      .map(file => {
+        const filePath = path.join(downloadsDir, file);
+        const stats = fs.statSync(filePath);
+        return {
+          name: file,
+          size: stats.size,
+          created: stats.birthtime,
+          downloadUrl: `/downloads/${file}`
+        };
+      })
+      .sort((a, b) => new Date(b.created) - new Date(a.created)); // Sort by newest first
+    
+    res.json({ success: true, files });
+  } catch (error) {
+    console.error('Error listing downloads:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API endpoint to list extracted files
+app.get('/api/extracted', async (req, res) => {
+  try {
+    const extractedFiles = await zipExtractor.getExtractedFiles();
+    res.json({ success: true, files: extractedFiles });
+  } catch (error) {
+    console.error('Error listing extracted files:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API endpoint for remote trigger from CI4 app
+app.post('/api/remote-trigger', async (req, res) => {
+  try {
+    const { action, token, data } = req.body;
+    
+    // Simple authentication (you can enhance this)
+    const expectedToken = process.env.REMOTE_TRIGGER_TOKEN || 'kiri-automation-2024';
+    
+    if (!token || token !== expectedToken) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Unauthorized - Invalid token' 
+      });
+    }
+    
+    console.log('🌐 Remote trigger received:', { action, data });
+    
+    switch (action) {
+      case 'start-scan':
+        // Trigger the scanning process
+        if (global.io) {
+          global.io.emit('remote-scan-trigger', {
+            message: 'Remote scan triggered from CI4',
+            data: data || {}
+          });
+        }
+        
+        res.json({ 
+          success: true, 
+          message: 'Scan triggered successfully',
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
+      case 'check-status':
+        // Return current status
+        const status = {
+          server: 'running',
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+          memory: process.memoryUsage()
+        };
+        
+        res.json({ 
+          success: true, 
+          status: status
+        });
+        break;
+        
+      case 'get-models':
+        // Return list of 3D models
+        try {
+          const extractedFiles = await zipExtractor.getExtractedFiles();
+          res.json({ 
+            success: true, 
+            models: extractedFiles,
+            count: extractedFiles.length
+          });
+        } catch (error) {
+          res.status(500).json({ 
+            success: false, 
+            error: 'Failed to get models: ' + error.message 
+          });
+        }
+        break;
+        
+      default:
+        res.status(400).json({ 
+          success: false, 
+          error: 'Unknown action: ' + action 
+        });
+    }
+    
+  } catch (error) {
+    console.error('Remote trigger error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Test endpoint to verify file explorer opening
+app.get('/api/test-explorer', (req, res) => {
+  const { spawn } = require('child_process');
+  const path = require('path');
+  const os = require('os');
+  
+  if (os.platform() === 'win32') {
+    const testPath = path.join(__dirname, 'extracted');
+    console.log('Testing file explorer with path:', testPath);
+    
+    const child = spawn('cmd', ['/c', 'start', '""', `"${testPath}"`], {
+      detached: true,
+      stdio: 'ignore',
+      shell: true
+    });
+    
+    child.on('error', (error) => {
+      console.error('Test failed:', error);
+      res.json({ success: false, error: error.message });
+    });
+    
+    child.on('spawn', () => {
+      console.log('Test command spawned successfully');
+      res.json({ success: true, message: 'Test command executed' });
+    });
+    
+    child.unref();
+  } else {
+    res.json({ success: false, error: 'Not Windows' });
+  }
+});
+
+// API endpoint to open folder in file explorer
+app.post('/api/open-folder', async (req, res) => {
+  try {
+    const { folderName } = req.body;
+    
+    if (!folderName) {
+      return res.status(400).json({ success: false, error: 'Folder name is required' });
+    }
+    
+    const folderPath = path.join(__dirname, 'extracted', folderName);
+    
+    // Check if folder exists
+    if (!fs.existsSync(folderPath)) {
+      return res.status(404).json({ success: false, error: 'Folder not found' });
+    }
+    
+    // Open folder in file explorer based on operating system
+    const { spawn } = require('child_process');
+    const os = require('os');
+    const platform = os.platform();
+    
+    let command, args;
+    
+    if (platform === 'win32') {
+      // Windows - use batch file for more reliable execution
+      const windowsPath = folderPath.replace(/\//g, '\\');
+      console.log(`Opening folder in file explorer: ${folderPath}`);
+      console.log(`Windows path: ${windowsPath}`);
+      
+      const { spawn } = require('child_process');
+      const batchFilePath = path.join(__dirname, 'open-folder.bat');
+      
+      console.log(`Using batch file: ${batchFilePath}`);
+      
+      // Execute the batch file
+      const child = spawn(batchFilePath, [`"${windowsPath}"`], {
+        detached: true,
+        stdio: 'ignore',
+        shell: true,
+        cwd: __dirname
+      });
+      
+      child.on('error', (error) => {
+        console.error('Batch file execution failed:', error);
+        
+        // Fallback: try direct explorer command
+        console.log('Trying direct explorer command as fallback...');
+        const explorerChild = spawn('explorer', [windowsPath], {
+          detached: true,
+          stdio: 'ignore'
+        });
+        
+        explorerChild.on('error', (error2) => {
+          console.error('Explorer fallback also failed:', error2);
+        });
+        
+        explorerChild.on('spawn', () => {
+          console.log('Explorer fallback spawned successfully');
+        });
+        
+        explorerChild.unref();
+      });
+      
+      child.on('spawn', () => {
+        console.log('Batch file spawned successfully');
+      });
+      
+      child.unref();
+    } else if (platform === 'darwin') {
+      // macOS
+      command = 'open';
+      args = [folderPath];
+      
+      console.log(`Opening folder in file explorer: ${folderPath}`);
+      console.log(`Command: ${command} ${args.join(' ')}`);
+      
+      const child = spawn(command, args, { 
+        detached: true, 
+        stdio: 'ignore'
+      });
+      child.unref();
+    } else {
+      // Linux
+      command = 'xdg-open';
+      args = [folderPath];
+      
+      console.log(`Opening folder in file explorer: ${folderPath}`);
+      console.log(`Command: ${command} ${args.join(' ')}`);
+      
+      const child = spawn(command, args, { 
+        detached: true, 
+        stdio: 'ignore'
+      });
+      child.unref();
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'File explorer opened successfully',
+      folderPath: folderPath
+    });
+    
+  } catch (error) {
+    console.error('Error opening folder:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -491,6 +768,11 @@ global.io = io;
 
 // Initialize turntable port monitoring
 const arduinoMonitor = new ArduinoPortMonitor(io);
+
+// Initialize zip extractor
+const ZipExtractor = require('./zip-extractor');
+const zipExtractor = new ZipExtractor();
+zipExtractor.startWatching();
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {

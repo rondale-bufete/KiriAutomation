@@ -39,6 +39,10 @@
                     <i class="fas fa-cloud-upload-alt"></i>
                     <span>Upload Existing Media Files</span>
                 </button>
+                <button class="tab-btn" data-tab="extracted-files">
+                    <i class="fas fa-cube"></i>
+                    <span>3D Models</span>
+                </button>
             </div>
         </div>
 
@@ -103,7 +107,7 @@
                             </div>
                         </div>
 
-                        <!-- Turntable Settings -->
+                        <!-- Turntable Settings
                         <div class="turntable-settings" id="turntableSettings" style="display: none;">
                             <div class="settings-header">
                                 <i class="fas fa-cog"></i>
@@ -115,7 +119,7 @@
                                     <span>Turntable rotation is automatically controlled by the scanning pipeline</span>
                                 </div>
                             </div>
-                        </div>
+                        </div> -->
 
                         <button class="btn" id="startScanBtn">
                             <i class="fas fa-camera"></i> Start Automated Scanning
@@ -134,25 +138,11 @@
                             <i class="fas fa-circle-notch fa-spin"></i> Monitoring active
                         </div>
 
-                        <button class="btn btn-secondary" id="stopMonitoringBtn" style="display: none; margin-top: 8px;">
+                        <!-- <button class="btn btn-secondary" id="stopMonitoringBtn" style="display: none; margin-top: 8px;">
                             <i class="fas fa-pause-circle"></i> Stop Monitoring
-                        </button>
+                        </button> -->
 
-                        <!-- Debug/Manual Controls -->
-                        <div class="debug-controls" style="margin-top: 16px; padding: 12px; background: #f3f4f6; border-radius: 8px; border: 1px solid #d1d5db;">
-                            <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 8px;">
-                                <i class="fas fa-bug"></i> Debug Controls
-                            </div>
-                            <button class="btn btn-secondary" id="fixPipelineBtn" style="margin-right: 8px;">
-                                <i class="fas fa-wrench"></i> Fix Pipeline
-                            </button>
-                            <button class="btn btn-secondary" id="checkPipelineBtn" style="margin-right: 8px;">
-                                <i class="fas fa-search"></i> Check Status
-                            </button>
-                            <button class="btn btn-secondary" id="debugProcessingBtn">
-                                <i class="fas fa-bug"></i> Debug Processing
-                            </button>
-                        </div>
+                       
                     </div>
 
                     <!-- Process Pipeline for Scanning -->
@@ -296,6 +286,48 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 3D Models Tab -->
+            <div class="tab-panel" id="extracted-files">
+                <div class="content-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-icon" style="background: #10b981; color: white;">
+                                <i class="fas fa-cube"></i>
+                            </div>
+                            <div>
+                                <div class="card-title">3D Models</div>
+                                <div class="card-description">Your extracted 3D model files</div>
+                            </div>
+                        </div>
+                        
+                        <div class="extracted-files-content">
+                            <div class="extracted-stats" id="extractedStats">
+                                <div class="stat-item">
+                                    <div class="stat-number" id="totalExtracted">0</div>
+                                    <div class="stat-label">3D Models</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-number" id="totalExtractedSize">0 MB</div>
+                                    <div class="stat-label">Total Size</div>
+                                </div>
+                            </div>
+                            
+                            <div class="extracted-list" id="extractedList">
+                                <div class="no-extracted" id="noExtracted">
+                                    <i class="fas fa-cube"></i>
+                                    <p>No 3D models yet</p>
+                                    <small>Your extracted 3D models will appear here</small>
+                                </div>
+                            </div>
+                            
+                            <button class="btn btn-secondary" id="refreshExtractedBtn">
+                                <i class="fas fa-sync-alt"></i> Refresh 3D Models
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Status Messages -->
@@ -312,6 +344,7 @@
                 <i class="fas fa-download"></i> Download 3D Model
             </a>
         </div>
+
     </div>
 
     <!-- Success Modal -->
@@ -327,7 +360,7 @@
             <div class="modal-details">
                 <div class="modal-details-title">File Location</div>
                 <div class="modal-details-text">
-                    Check your device's Downloads folder to find your 3D model file.
+                    Your 3D model has been saved to the app's downloads folder. You can access it through the app interface.
                 </div>
             </div>
             <button class="modal-btn" id="modalOkBtn">Got it!</button>
@@ -434,6 +467,15 @@
             if (activeButton && activePanel) {
                 activeButton.classList.add('active');
                 activePanel.classList.add('active');
+            }
+
+            // Initialize 3D Models when the extracted-files tab is shown
+            if (tabName === 'extracted-files') {
+                console.log('🎯 3D Models tab activated, initializing...');
+                // Small delay to ensure DOM is ready
+                setTimeout(() => {
+                    initialize3DModels();
+                }, 100);
             }
 
             // Stop any ongoing scanning when switching tabs
@@ -790,6 +832,230 @@
                 }
             } catch (error) {
                 console.error('Status check failed:', error);
+            }
+        }
+
+        // 3D Models functionality
+        let refreshExtractedBtn, extractedList, noExtracted, totalExtracted, totalExtractedSize;
+
+        // Initialize 3D Models functionality
+        function initialize3DModels() {
+            console.log('🎯 initialize3DModels called');
+            
+            // Get DOM elements
+            refreshExtractedBtn = document.getElementById('refreshExtractedBtn');
+            extractedList = document.getElementById('extractedList');
+            noExtracted = document.getElementById('noExtracted');
+            totalExtracted = document.getElementById('totalExtracted');
+            totalExtractedSize = document.getElementById('totalExtractedSize');
+            
+            console.log('🎯 DOM elements loaded:', { 
+                refreshExtractedBtn: !!refreshExtractedBtn, 
+                extractedList: !!extractedList, 
+                noExtracted: !!noExtracted, 
+                totalExtracted: !!totalExtracted, 
+                totalExtractedSize: !!totalExtractedSize 
+            });
+            
+            // Load extracted files
+            loadExtractedFiles();
+            
+            // Refresh 3D models button
+            if (refreshExtractedBtn) {
+                refreshExtractedBtn.addEventListener('click', loadExtractedFiles);
+                console.log('🎯 Refresh button event listener added');
+            } else {
+                console.error('🎯 Refresh button not found!');
+            }
+        }
+
+        // Load 3D models on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🎯 DOM Content Loaded - initializing 3D models');
+            initialize3DModels();
+        });
+
+
+        async function loadExtractedFiles() {
+            try {
+                console.log('🔄 Loading extracted files...');
+                console.log('🔄 DOM elements available:', { 
+                    totalExtracted: !!totalExtracted, 
+                    totalExtractedSize: !!totalExtractedSize, 
+                    extractedList: !!extractedList, 
+                    noExtracted: !!noExtracted 
+                });
+                
+                const response = await fetch('/api/extracted');
+                const result = await response.json();
+                
+                console.log('📦 API Response:', result);
+                
+                if (result.success) {
+                    console.log('📦 Files received:', result.files);
+                    console.log('📦 Number of files:', result.files.length);
+                    displayExtractedFiles(result.files);
+                } else {
+                    console.error('Failed to load extracted files:', result.error);
+                }
+            } catch (error) {
+                console.error('Error loading extracted files:', error);
+            }
+        }
+
+        function displayExtractedFiles(files) {
+            console.log('🎨 displayExtractedFiles called with:', files);
+            
+            // Re-get DOM elements in case they weren't initialized properly
+            if (!totalExtracted) totalExtracted = document.getElementById('totalExtracted');
+            if (!totalExtractedSize) totalExtractedSize = document.getElementById('totalExtractedSize');
+            if (!extractedList) extractedList = document.getElementById('extractedList');
+            if (!noExtracted) noExtracted = document.getElementById('noExtracted');
+            
+            console.log('🎨 DOM elements:', { 
+                totalExtracted: !!totalExtracted, 
+                totalExtractedSize: !!totalExtractedSize, 
+                extractedList: !!extractedList, 
+                noExtracted: !!noExtracted 
+            });
+            
+            // Flatten the structure to show individual 3D models
+            const flattenedFiles = [];
+            let totalSizeBytes = 0;
+            
+            files.forEach(folder => {
+                if (folder.type === 'directory' && folder.filesWithSizes) {
+                    folder.filesWithSizes.forEach(fileInfo => {
+                        // Only show 3D model files
+                        if (fileInfo.type === '.glb' || fileInfo.type === '.obj' || fileInfo.type === '.stl') {
+                            flattenedFiles.push({
+                                name: fileInfo.name,
+                                folderName: folder.name,
+                                type: '3d-model',
+                                path: `${folder.name}/${fileInfo.name}`,
+                                size: fileInfo.size,
+                                created: folder.created,
+                                displayName: `3D Model (${folder.name.substring(0, 8)}...)`
+                            });
+                            totalSizeBytes += fileInfo.size;
+                        }
+                    });
+                } else if (folder.type === 'file' && (folder.name.toLowerCase().endsWith('.glb') || folder.name.toLowerCase().endsWith('.obj') || folder.name.toLowerCase().endsWith('.stl'))) {
+                    flattenedFiles.push({
+                        ...folder,
+                        type: '3d-model',
+                        displayName: folder.name
+                    });
+                    totalSizeBytes += folder.size || 0;
+                }
+            });
+            
+            const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(1);
+            
+            console.log('🎨 Stats calculated:', { totalSizeBytes, totalSizeMB, flattenedFiles });
+            
+            // Update stats
+            if (totalExtracted) totalExtracted.textContent = flattenedFiles.length;
+            if (totalExtractedSize) totalExtractedSize.textContent = `${totalSizeMB} MB`;
+            
+            if (flattenedFiles.length === 0) {
+                console.log('🎨 No 3D models found, showing no-extracted message');
+                if (noExtracted) noExtracted.style.display = 'block';
+                if (extractedList) {
+                    extractedList.innerHTML = '';
+                    extractedList.appendChild(noExtracted);
+                }
+            } else {
+                console.log('🎨 3D models found, generating HTML for', flattenedFiles.length, 'models');
+                if (noExtracted) noExtracted.style.display = 'none';
+                
+                const filesHTML = flattenedFiles.map(file => {
+                    const fileExtension = file.name.split('.').pop().toLowerCase();
+                    const iconClass = fileExtension === 'glb' ? 'fa-cube' : 
+                                    fileExtension === 'obj' ? 'fa-shapes' : 
+                                    fileExtension === 'stl' ? 'fa-cube' : 'fa-file';
+                    
+                    return `
+                        <div class="extracted-item">
+                            <div class="file-info">
+                                <div class="file-icon">
+                                    <i class="fas ${iconClass}"></i>
+                                </div>
+                                <div class="file-details">
+                                    <div class="file-name">${file.displayName || file.name}</div>
+                                    <div class="file-meta">
+                                        <span class="file-type">${fileExtension.toUpperCase()} 3D Model</span>
+                                        <span class="file-size">${formatFileSize(file.size)}</span>
+                                        <span class="file-date">${new Date(file.created).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="file-actions">
+                                <a href="/extracted/${file.path}" class="btn btn-sm" download>
+                                    <i class="fas fa-download"></i> Download
+                                </a>
+                                <button class="btn btn-sm btn-secondary" onclick="preview3DModel('${file.path}', '${file.name}')">
+                                    <i class="fas fa-eye"></i> Preview
+                                </button>
+                                <button class="btn btn-sm btn-secondary" onclick="openFolderInExplorer('${file.folderName || file.name}')">
+                                    <i class="fas fa-folder-open"></i> Open Folder
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                console.log('🎨 Generated HTML:', filesHTML);
+                if (extractedList) {
+                    extractedList.innerHTML = filesHTML;
+                    console.log('🎨 HTML inserted into extractedList');
+                } else {
+                    console.error('🎨 extractedList element not found!');
+                }
+            }
+        }
+
+        // Function to preview 3D model
+        function preview3DModel(filePath, fileName) {
+            console.log('Previewing 3D model:', filePath, fileName);
+            
+            // Create a new window/tab to preview the 3D model
+            const previewUrl = `/extracted/${filePath}`;
+            const previewWindow = window.open(previewUrl, '_blank', 'width=800,height=600');
+            
+            if (previewWindow) {
+                showStatus('info', `Opening 3D model preview: ${fileName}`);
+            } else {
+                showStatus('error', 'Could not open preview window. Please check your popup blocker settings.');
+            }
+        }
+
+        // Function to open folder in file explorer
+        async function openFolderInExplorer(folderName) {
+            try {
+                console.log('Opening folder in file explorer:', folderName);
+                
+                const response = await fetch('/api/open-folder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ folderName: folderName })
+                });
+                
+                const result = await response.json();
+                console.log('Open folder API response:', result);
+                
+                if (result.success) {
+                    console.log('File explorer opened successfully');
+                    showStatus('success', 'File explorer opened successfully');
+                } else {
+                    console.error('Failed to open file explorer:', result.error);
+                    showStatus('error', 'Failed to open file explorer: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error opening folder:', error);
+                showStatus('error', 'Error opening folder: ' + error.message);
             }
         }
 

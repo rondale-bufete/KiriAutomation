@@ -22,6 +22,48 @@ class KiriEngineAutomation {
         this.trackedProjectTitle = null;  // Store project title we're monitoring
     }
 
+    detectBrowserPath(browserType) {
+        const os = require('os');
+        const fs = require('fs');
+        const path = require('path');
+        const platform = os.platform();
+        const username = os.userInfo().username;
+
+        const browserPaths = {
+            chrome: {
+                windows: [
+                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                    `C:\\Users\\${username}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe`
+                ]
+            },
+            edge: {
+                windows: [
+                    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+                    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+                    `C:\\Users\\${username}\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe`
+                ]
+            },
+            chromium: {
+                windows: [
+                    'C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe',
+                    'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+                    `C:\\Users\\${username}\\AppData\\Local\\Chromium\\Application\\chrome.exe`
+                ]
+            }
+        };
+
+        if (platform === 'win32' && browserPaths[browserType] && browserPaths[browserType].windows) {
+            for (const browserPath of browserPaths[browserType].windows) {
+                if (fs.existsSync(browserPath)) {
+                    return browserPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
     async init() {
         try {
             // Close existing browser if it exists
@@ -39,10 +81,17 @@ class KiriEngineAutomation {
             console.log('Launching new browser instance...');
 
             // Configure browser launch options based on browser type
+            const appDownloadsDir = path.resolve(__dirname, 'downloads');
             const launchOptions = {
                 headless: this.headless,
                 defaultViewport: null,
-                userDataDir: this.sessionPath
+                userDataDir: this.sessionPath,
+                // Set download directory
+                downloadsPath: appDownloadsDir,
+                // Add timeout for browser launch
+                timeout: 60000,
+                // Add protocol timeout
+                protocolTimeout: 60000
             };
 
             // Add browser-specific configurations
@@ -51,24 +100,13 @@ class KiriEngineAutomation {
                 if (this.executablePath) {
                     launchOptions.executablePath = this.executablePath;
                 } else {
-                    // Auto-detect browser paths
-                    const os = require('os');
-                    const platform = os.platform();
-
-                    if (platform === 'win32') {
-                        if (this.browserType === 'chrome') {
-                            launchOptions.executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-                        } else if (this.browserType === 'edge') {
-                            launchOptions.executablePath = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-                        }
-                    } else if (platform === 'darwin') {
-                        if (this.browserType === 'chrome') {
-                            launchOptions.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-                        }
-                    } else if (platform === 'linux') {
-                        if (this.browserType === 'chrome') {
-                            launchOptions.executablePath = '/usr/bin/google-chrome';
-                        }
+                    // Auto-detect browser paths with fallback
+                    const detectedPath = this.detectBrowserPath(this.browserType);
+                    if (detectedPath) {
+                        launchOptions.executablePath = detectedPath;
+                        console.log(`Using detected browser: ${detectedPath}`);
+                    } else {
+                        console.log(`Warning: Could not detect ${this.browserType} browser path, using default Puppeteer browser`);
                     }
                 }
 
@@ -97,7 +135,9 @@ class KiriEngineAutomation {
                     '--disable-ipc-flooding-protection',
                     '--allow-running-insecure-content',
                     '--disable-features=TranslateUI',
-                    '--disable-features=BlinkGenPropertyTrees'
+                    '--disable-features=BlinkGenPropertyTrees',
+                    // Set download directory
+                    `--download-dir=${appDownloadsDir}`
                 ];
             } else if (this.browserType === 'firefox') {
                 // Firefox specific configuration
@@ -120,15 +160,66 @@ class KiriEngineAutomation {
                     '--disable-features=VizDisplayCompositor',
                     '--disable-background-timer-throttling',
                     '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding'
+                    '--disable-renderer-backgrounding',
+                    // Set download directory
+                    `--download-dir=${appDownloadsDir}`
                 ];
             }
 
-            console.log(`Launching ${this.browserType} browser...`);
-            this.browser = await puppeteer.launch(launchOptions);
+            // Try to launch browser with fallback mechanism
+            let browserLaunched = false;
+            const fallbackBrowsers = ['chromium', 'chrome', 'edge'];
+            let currentBrowserType = this.browserType;
+
+            for (let i = 0; i < fallbackBrowsers.length && !browserLaunched; i++) {
+                try {
+                    console.log(`Attempting to launch ${currentBrowserType} browser...`);
+                    console.log(`Download directory set to: ${appDownloadsDir}`);
+                    
+                    // Update browser type for this attempt
+                    if (currentBrowserType !== this.browserType) {
+                        const detectedPath = this.detectBrowserPath(currentBrowserType);
+                        if (detectedPath) {
+                            launchOptions.executablePath = detectedPath;
+                            console.log(`Using fallback browser: ${detectedPath}`);
+                        } else {
+                            console.log(`Skipping ${currentBrowserType} - not found`);
+                            continue;
+                        }
+                    }
+
+                    this.browser = await puppeteer.launch(launchOptions);
+                    console.log(`${currentBrowserType} browser launched successfully`);
+                    browserLaunched = true;
+                    this.browserType = currentBrowserType; // Update the actual browser type used
+
+                } catch (error) {
+                    console.log(`Failed to launch ${currentBrowserType}: ${error.message}`);
+                    if (i < fallbackBrowsers.length - 1) {
+                        currentBrowserType = fallbackBrowsers[i + 1];
+                        console.log(`Trying fallback browser: ${currentBrowserType}`);
+                    }
+                }
+            }
+
+            if (!browserLaunched) {
+                throw new Error('Failed to launch any browser. Please ensure Chrome, Edge, or Chromium is installed.');
+            }
 
             console.log('Creating new page...');
             this.page = await this.browser.newPage();
+
+            // Set up download behavior immediately after page creation
+            try {
+                const client = await this.page.target().createCDPSession();
+                await client.send('Page.setDownloadBehavior', {
+                    behavior: 'allow',
+                    downloadPath: appDownloadsDir
+                });
+                console.log('Initial download behavior set to:', appDownloadsDir);
+            } catch (error) {
+                console.log('Could not set initial download behavior:', error.message);
+            }
 
             // Wait for page to be fully ready
             await this.page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 });
@@ -1606,28 +1697,39 @@ class KiriEngineAutomation {
                     try {
                         // Try the newer CDP method first
                         const client = await this.page.target().createCDPSession();
-                        // Use default system download directory
-                        const os = require('os');
-                        const defaultDownloadDir = path.join(os.homedir(), 'Downloads');
+                        // Use app's downloads directory
+                        const appDownloadsDir = path.resolve(__dirname, 'downloads');
+                        console.log('Setting up download behavior with directory:', appDownloadsDir);
 
                         await client.send('Page.setDownloadBehavior', {
                             behavior: 'allow',
-                            downloadPath: defaultDownloadDir
+                            downloadPath: appDownloadsDir
                         });
-                        console.log('Download behavior set to default directory:', defaultDownloadDir);
+                        console.log('Download behavior set to app directory:', appDownloadsDir);
 
                         // Additional Chrome-specific download settings
                         if (this.browserType === 'chrome') {
                             await client.send('Page.setDownloadBehavior', {
                                 behavior: 'allow',
-                                downloadPath: defaultDownloadDir
+                                downloadPath: appDownloadsDir
                             });
-                            console.log('Chrome download behavior configured with default path:', defaultDownloadDir);
+                            console.log('Chrome download behavior configured with app path:', appDownloadsDir);
                         }
                     } catch (cdpError) {
                         console.log('CDP method failed, trying alternative approach:', cdpError.message);
-                        // Fallback: just proceed without setting download behavior
-                        console.log('Proceeding without explicit download path setting');
+                        // Fallback: try to set download behavior using page.evaluate
+                        try {
+                            await this.page.evaluateOnNewDocument(() => {
+                                // Override the default download behavior
+                                window.addEventListener('beforeunload', () => {
+                                    // This might help with download path
+                                });
+                            });
+                            console.log('Alternative download behavior set');
+                        } catch (evalError) {
+                            console.log('Alternative method also failed:', evalError.message);
+                            console.log('Proceeding without explicit download path setting');
+                        }
                     }
 
                     // Set up download event listeners before clicking

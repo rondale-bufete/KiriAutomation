@@ -10,5 +10,22 @@ config.js
 
 # Session folder and all its contents
 session/
+/daemon
+/extracted
 
 edit-env.js
+downloads/
+uploads/
+session/
+test-remote-trigger.js
+test-remote-starter.js
+auto-start-server.js
+remote-starter.js
+test-remote-trigger.js
+test-remote-starter.js
+auto-start-server.js
+remote-starter.js
+test-remote-trigger.js
+test-remote-starter.js
+auto-start-server.js
+remote-starter.js
