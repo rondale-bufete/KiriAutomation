@@ -2,6 +2,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const yauzl = require('yauzl');
+const FormData = require('form-data');
 
 class ZipExtractor {
     constructor() {
@@ -10,6 +11,12 @@ class ZipExtractor {
         this.watcher = null;
         this.processingFiles = new Set(); // Track files being processed to avoid duplicates
         
+        // VPS Configuration for auto-upload
+        this.vpsConfig = {
+            baseUrl: process.env.VPS_BASE_URL || 'https://crca-artifacts-contentmanagement.site',
+            apiKey: process.env.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system'
+        };
+        
         // Ensure directories exist
         fs.ensureDirSync(this.downloadsDir);
         fs.ensureDirSync(this.extractedDir);
@@ -17,6 +24,7 @@ class ZipExtractor {
         console.log('📦 ZipExtractor initialized');
         console.log('📦 Downloads directory:', this.downloadsDir);
         console.log('📦 Extracted directory:', this.extractedDir);
+        console.log('📦 VPS Auto-upload enabled:', this.vpsConfig.baseUrl);
     }
 
     /**
@@ -84,9 +92,15 @@ class ZipExtractor {
             await fs.ensureDir(extractFolder);
             
             // Extract the zip file
-            await this.extractZip(zipPath, extractFolder);
+            const extractedFiles = await this.extractZip(zipPath, extractFolder);
             
             console.log('📦 Successfully extracted:', filename, 'to:', extractFolder);
+            
+            // Flatten GLB files - move them out of nested folders to extracted root
+            const flattenedGLBFiles = await this.flattenGLBFiles(extractFolder, extractedFiles);
+            
+            // Auto-upload GLB files to VPS
+            await this.autoUploadGLBFiles(extractFolder, flattenedGLBFiles);
             
             // Delete the original zip file after successful extraction
             await fs.remove(zipPath);
@@ -96,6 +110,178 @@ class ZipExtractor {
             console.error('📦 Error processing zip file:', filename, error);
         } finally {
             this.processingFiles.delete(filename);
+        }
+    }
+
+    /**
+     * Flatten GLB files - move them out of nested folders to extracted root
+     */
+    async flattenGLBFiles(extractFolder, extractedFiles) {
+        try {
+            const flattenedFiles = [];
+            
+            for (const file of extractedFiles) {
+                const filePath = path.join(extractFolder, file);
+                
+                // Check if it's a GLB file
+                if (file.toLowerCase().endsWith('.glb')) {
+                    // Check if file exists
+                    if (await fs.pathExists(filePath)) {
+                        // Get the filename without path
+                        const fileName = path.basename(file);
+                        
+                        // Create new path directly in extractFolder
+                        const newPath = path.join(extractFolder, fileName);
+                        
+                        // If the file is not already in the root, move it
+                        if (filePath !== newPath) {
+                            console.log('📦 Moving GLB file from nested folder:', file, '→', fileName);
+                            await fs.move(filePath, newPath, { overwrite: true });
+                            
+                            // Remove empty parent directories
+                            const parentDir = path.dirname(filePath);
+                            if (parentDir !== extractFolder) {
+                                try {
+                                    await fs.remove(parentDir);
+                                    console.log('📦 Removed empty parent directory:', parentDir);
+                                } catch (e) {
+                                    console.log('📦 Could not remove parent directory (not empty):', parentDir);
+                                }
+                            }
+                        }
+                        
+                        flattenedFiles.push(fileName);
+                    }
+                } else {
+                    // Keep non-GLB files as they are
+                    flattenedFiles.push(file);
+                }
+            }
+            
+            console.log('📦 Flattened GLB files:', flattenedFiles);
+            return flattenedFiles;
+            
+        } catch (error) {
+            console.error('❌ Error flattening GLB files:', error);
+            return extractedFiles; // Return original list if flattening fails
+        }
+    }
+
+    /**
+     * Auto-upload GLB files to VPS after extraction
+     */
+    async autoUploadGLBFiles(extractFolder, extractedFiles) {
+        try {
+            // Find GLB files in the extracted files
+            const glbFiles = extractedFiles.filter(file => 
+                file.toLowerCase().endsWith('.glb')
+            );
+
+            if (glbFiles.length === 0) {
+                console.log('📦 No GLB files found for auto-upload');
+                return;
+            }
+
+            console.log('📦 Found GLB files for auto-upload:', glbFiles);
+
+            // Upload each GLB file
+            for (const glbFile of glbFiles) {
+                const glbPath = path.join(extractFolder, glbFile);
+                
+                try {
+                    console.log('📦 Auto-uploading GLB file:', glbFile);
+                    const uploadResult = await this.uploadGLBToVPS(glbPath, glbFile);
+                    
+                    if (uploadResult.success) {
+                        console.log('✅ GLB file uploaded successfully:', glbFile);
+                    } else {
+                        console.error('❌ GLB file upload failed:', glbFile, uploadResult.error);
+                    }
+                } catch (error) {
+                    console.error('❌ Error uploading GLB file:', glbFile, error.message);
+                }
+            }
+
+        } catch (error) {
+            console.error('❌ Error in autoUploadGLBFiles:', error);
+        }
+    }
+
+    /**
+     * Upload a single GLB file to VPS
+     */
+    async uploadGLBToVPS(filePath, fileName) {
+        try {
+            // Check if file exists
+            if (!await fs.pathExists(filePath)) {
+                return { success: false, error: 'File not found' };
+            }
+
+            // Get file stats
+            const stats = await fs.stat(filePath);
+            console.log('📦 Uploading GLB file:', fileName, 'Size:', stats.size, 'bytes');
+
+            // Create FormData
+            const formData = new FormData();
+            const fileBuffer = await fs.readFile(filePath);
+            
+            formData.append('file', fileBuffer, {
+                filename: fileName,
+                contentType: 'model/gltf-binary'
+            });
+            formData.append('api_key', this.vpsConfig.apiKey);
+
+            // Use node-fetch with compatibility layer
+            let fetchFunction;
+            try {
+                const nodeFetch = require('node-fetch');
+                if (typeof nodeFetch === 'function') {
+                    fetchFunction = nodeFetch;
+                } else if (typeof nodeFetch === 'object' && nodeFetch.default) {
+                    fetchFunction = nodeFetch.default;
+                } else {
+                    throw new Error('Unknown node-fetch format');
+                }
+            } catch (e) {
+                return { success: false, error: 'Failed to import node-fetch: ' + e.message };
+            }
+
+            // Upload to VPS
+            const url = `${this.vpsConfig.baseUrl}/remote-upload/drop-file`;
+            const response = await fetchFunction(url, {
+                method: 'POST',
+                headers: {
+                    'X-API-Key': this.vpsConfig.apiKey,
+                    ...formData.getHeaders()
+                },
+                body: formData
+            });
+
+            const responseText = await response.text();
+            let responseData;
+            
+            try {
+                responseData = JSON.parse(responseText);
+            } catch (e) {
+                return { success: false, error: 'Invalid JSON response: ' + responseText };
+            }
+
+            if (response.ok && responseData.success) {
+                return { 
+                    success: true, 
+                    message: 'GLB file uploaded successfully',
+                    vpsResponse: responseData
+                };
+            } else {
+                return { 
+                    success: false, 
+                    error: responseData.error || 'Upload failed',
+                    vpsResponse: responseData
+                };
+            }
+
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     }
 

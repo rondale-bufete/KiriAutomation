@@ -1,0 +1,1221 @@
+<!-- NODE JS APP TEST UPLOAD PAGE -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Upload Test Page</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            padding: 25px;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #f9fafb;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title i {
+            color: #4f46e5;
+        }
+
+        .config-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .config-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .config-group label {
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .config-group input {
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .config-group input:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .upload-area {
+            border: 2px dashed #d1d5db;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            background: white;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            border-color: #4f46e5;
+            background: #f8faff;
+        }
+
+        .upload-area.dragover {
+            border-color: #4f46e5;
+            background: #f0f4ff;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: #9ca3af;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+
+        .upload-subtext {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-info {
+            display: none;
+            padding: 15px;
+            background: #f3f4f6;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .file-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .file-name {
+            font-weight: 500;
+            color: #1f2937;
+        }
+
+        .file-size {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .progress-container {
+            margin-top: 10px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            font-size: 0.9rem;
+            color: #6b7280;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 70, 229, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .test-buttons {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .response-area {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .status {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            display: none;
+        }
+
+        .status.show {
+            display: block;
+        }
+
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        .status.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #93c5fd;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .endpoint-info {
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+        }
+
+        .endpoint-info h4 {
+            color: #1f2937;
+            margin-bottom: 10px;
+        }
+
+        .endpoint-info code {
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        @media (max-width: 768px) {
+            .config-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .test-buttons {
+                grid-template-columns: 1fr;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-cloud-upload-alt"></i> Remote Upload Test</h1>
+            <p>Test your PHP remote upload endpoints with this Node.js application</p>
+        </div>
+
+        <div class="content">
+            <!-- Configuration Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-cog"></i>
+                    Configuration
+                </div>
+                <div class="config-section">
+                    <div class="config-group">
+                        <label for="phpBaseUrl">PHP Backend URL (VPS):</label>
+                        <input type="text" id="phpBaseUrl" value="https://crca-artifacts-contentmanagement.site" placeholder="https://your-domain.com" readonly>
+                        <small style="color: #6b7280; font-size: 0.8rem;">This is now handled by the Node.js server proxy</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="apiKey">API Key:</label>
+                        <input type="text" id="apiKey" value="mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system" placeholder="Your API key" readonly>
+                        <small style="color: #6b7280; font-size: 0.8rem;">Configured in server.js</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-upload"></i>
+                    File Upload Test
+                </div>
+                
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <div class="upload-text">Drop your GLB file here or click to browse</div>
+                    <div class="upload-subtext">Only .glb files are allowed (max 200MB)</div>
+                    <input type="file" id="fileInput" class="file-input" accept=".glb">
+                </div>
+
+                <div class="file-info" id="fileInfo">
+                    <div class="file-details">
+                        <span class="file-name" id="fileName"></span>
+                        <span class="file-size" id="fileSize"></span>
+                    </div>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">Ready to upload</div>
+                    </div>
+                </div>
+
+                <div class="test-buttons">
+                    <button class="btn" id="testUploadBtn" disabled>
+                        <i class="fas fa-upload"></i> Test Upload
+                    </button>
+                    <button class="btn btn-secondary" id="clearBtn" style="display: none;">
+                        <i class="fas fa-refresh"></i> Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Endpoint Testing Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-flask"></i>
+                    Endpoint Testing
+                </div>
+                
+                <div class="endpoint-info">
+                    <h4>Node.js Proxy Endpoints (No CORS Issues!):</h4>
+                    <p><strong>GET</strong> <code>/api/vps/test-connection</code> - Test VPS connection</p>
+                    <p><strong>GET</strong> <code>/api/vps/test-cors</code> - Test CORS configuration</p>
+                    <p><strong>POST</strong> <code>/api/vps/test-upload</code> - Test upload endpoint</p>
+                    <p><strong>POST</strong> <code>/api/vps/cleanup-temp-files</code> - Clean up old temp files</p>
+                    <p><strong>GET</strong> <code>/api/vps/temp-file/{tempName}</code> - Get temp file info</p>
+                    <p><strong>POST</strong> <code>/api/vps/move-temp-file</code> - Move temp file to permanent location</p>
+                    <br>
+                    <p><strong>✅ CORS Issues Solved!</strong></p>
+                    <p>The Node.js server now acts as a proxy to your VPS PHP backend.</p>
+                    <p>No more CORS issues - the browser talks to localhost:3002, which talks to your VPS.</p>
+                </div>
+
+                <div class="test-buttons">
+                    <button class="btn btn-success" id="testServerBtn">
+                        <i class="fas fa-server"></i> Test Server
+                    </button>
+                    <button class="btn btn-warning" id="testFetchBtn">
+                        <i class="fas fa-code"></i> Test Fetch Function
+                    </button>
+                    <button class="btn btn-danger" id="testDirectBtn">
+                        <i class="fas fa-exclamation-triangle"></i> Test Direct VPS
+                    </button>
+                    <button class="btn btn-info" id="testFileUploadBtn">
+                        <i class="fas fa-file-upload"></i> Test File Upload
+                    </button>
+                    <button class="btn btn-primary" id="testSimpleUploadBtn">
+                        <i class="fas fa-file-text"></i> Test Simple Upload
+                    </button>
+                    <button class="btn btn-info" id="testPhpDebugBtn">
+                        <i class="fas fa-code"></i> Test PHP Debug
+                    </button>
+                    <button class="btn btn-warning" id="debugUploadBtn">
+                        <i class="fas fa-bug"></i> Debug Upload
+                    </button>
+                    <button class="btn btn-warning" id="testEndpointBtn">
+                        <i class="fas fa-vial"></i> Test Upload Endpoint
+                    </button>
+                    <button class="btn btn-secondary" id="cleanupBtn">
+                        <i class="fas fa-broom"></i> Cleanup Temp Files
+                    </button>
+                    <button class="btn btn-success" id="checkConnectionBtn">
+                        <i class="fas fa-wifi"></i> Check VPS Connection
+                    </button>
+                    <button class="btn btn-secondary" id="testCorsBtn">
+                        <i class="fas fa-shield-alt"></i> Test CORS
+                    </button>
+                    <button class="btn btn-secondary" id="debugOriginBtn">
+                        <i class="fas fa-bug"></i> Debug Origin
+                    </button>
+                </div>
+                
+                <div style="background: #d1fae5; border: 1px solid #10b981; border-radius: 8px; padding: 15px; margin-top: 15px;">
+                    <h4 style="color: #065f46; margin-bottom: 10px;">✅ CORS Issues Solved!</h4>
+                    <p style="color: #065f46; margin-bottom: 10px;">The Node.js server now acts as a proxy to your VPS PHP backend.</p>
+                    <p style="color: #065f46; font-size: 0.9rem; margin-top: 10px;"><strong>Architecture:</strong> Browser → Node.js (localhost:3002) → VPS PHP → Response</p>
+                </div>
+            </div>
+
+            <!-- Status and Response Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-terminal"></i>
+                    Response & Debug
+                </div>
+                
+                <div class="status" id="status"></div>
+                <div class="response-area" id="responseArea">Ready to test... Select a file or click a test button to begin.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const testUploadBtn = document.getElementById('testUploadBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const testEndpointBtn = document.getElementById('testEndpointBtn');
+        const cleanupBtn = document.getElementById('cleanupBtn');
+        const checkConnectionBtn = document.getElementById('checkConnectionBtn');
+        const testCorsBtn = document.getElementById('testCorsBtn');
+        const debugOriginBtn = document.getElementById('debugOriginBtn');
+        const testServerBtn = document.getElementById('testServerBtn');
+        const testFetchBtn = document.getElementById('testFetchBtn');
+        const testDirectBtn = document.getElementById('testDirectBtn');
+        const testFileUploadBtn = document.getElementById('testFileUploadBtn');
+        const testSimpleUploadBtn = document.getElementById('testSimpleUploadBtn');
+        const testPhpDebugBtn = document.getElementById('testPhpDebugBtn');
+        const debugUploadBtn = document.getElementById('debugUploadBtn');
+        const status = document.getElementById('status');
+        const responseArea = document.getElementById('responseArea');
+        const phpBaseUrl = document.getElementById('phpBaseUrl');
+        const apiKey = document.getElementById('apiKey');
+
+        let selectedFile = null;
+
+        // Event Listeners
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('dragleave', handleDragLeave);
+        uploadArea.addEventListener('drop', handleDrop);
+        fileInput.addEventListener('change', handleFileSelect);
+        clearBtn.addEventListener('click', clearForm);
+        testUploadBtn.addEventListener('click', testFileUpload);
+        testEndpointBtn.addEventListener('click', testUploadEndpoint);
+        cleanupBtn.addEventListener('click', cleanupTempFiles);
+        checkConnectionBtn.addEventListener('click', checkConnection);
+        testCorsBtn.addEventListener('click', testCors);
+        debugOriginBtn.addEventListener('click', debugOrigin);
+        testServerBtn.addEventListener('click', testServer);
+        testFetchBtn.addEventListener('click', testFetch);
+        testDirectBtn.addEventListener('click', testDirect);
+        testFileUploadBtn.addEventListener('click', testFileUploadEndpoint);
+        testSimpleUploadBtn.addEventListener('click', testSimpleUpload);
+        testPhpDebugBtn.addEventListener('click', testPhpDebug);
+        debugUploadBtn.addEventListener('click', debugUpload);
+
+        // Drag and Drop Handlers
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length > 0) {
+                handleFileSelect({ target: { files } });
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            const file = files[0];
+            
+            // Validate file type
+            if (!file.name.toLowerCase().endsWith('.glb')) {
+                showStatus('error', 'Only .glb files are allowed');
+                return;
+            }
+
+            // Validate file size (200MB)
+            if (file.size > 200 * 1024 * 1024) {
+                showStatus('error', 'File size must be less than 200MB');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+            fileInfo.classList.add('show');
+            testUploadBtn.disabled = false;
+            clearBtn.style.display = 'inline-block';
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Ready to upload';
+            
+            showStatus('success', `File selected: ${file.name} (${formatFileSize(file.size)})`);
+        }
+
+        function clearForm() {
+            fileInput.value = '';
+            selectedFile = null;
+            fileInfo.classList.remove('show');
+            testUploadBtn.disabled = true;
+            clearBtn.style.display = 'none';
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Ready to upload';
+            showStatus('info', 'Form cleared');
+        }
+
+        // API Functions
+        async function testFileUpload() {
+            if (!selectedFile) {
+                showStatus('error', 'Please select a file first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            testUploadBtn.disabled = true;
+            testUploadBtn.innerHTML = '<div class="loading-spinner"></div> Uploading...';
+            showStatus('info', `Uploading ${selectedFile.name} (${formatFileSize(selectedFile.size)}) via Node.js proxy...`);
+
+            // Show progress
+            progressFill.style.width = '10%';
+            progressText.textContent = 'Preparing upload...';
+
+            try {
+                // Use Node.js proxy endpoint instead of direct VPS call
+                const response = await fetch('/api/vps/upload-file', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                progressFill.style.width = '50%';
+                progressText.textContent = 'Processing response...';
+
+                const result = await response.json();
+                
+                displayResponse('File Upload Response (via Node.js proxy)', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result,
+                    fileInfo: {
+                        name: selectedFile.name,
+                        size: selectedFile.size,
+                        type: selectedFile.type
+                    }
+                });
+
+                if (result.success) {
+                    showStatus('success', `File "${selectedFile.name}" uploaded successfully via proxy!`);
+                    progressFill.style.width = '100%';
+                    progressText.textContent = 'Upload complete!';
+                    
+                    // Show VPS response details
+                    if (result.vpsResponse && result.vpsResponse.data) {
+                        const vpsData = result.vpsResponse.data;
+                        if (vpsData.success && vpsData.file) {
+                            showStatus('success', `File saved as: ${vpsData.file.temp_name}`);
+                        }
+                    }
+                } else {
+                    showStatus('error', result.error || 'Upload failed');
+                    progressFill.style.width = '0%';
+                    progressText.textContent = 'Upload failed';
+                }
+            } catch (error) {
+                displayResponse('Upload Error', {
+                    error: error.message,
+                    stack: error.stack,
+                    fileInfo: {
+                        name: selectedFile.name,
+                        size: selectedFile.size
+                    }
+                });
+                showStatus('error', 'Upload failed: ' + error.message);
+                progressFill.style.width = '0%';
+                progressText.textContent = 'Upload failed';
+            } finally {
+                testUploadBtn.disabled = false;
+                testUploadBtn.innerHTML = '<i class="fas fa-upload"></i> Test Upload';
+            }
+        }
+
+        async function testUploadEndpoint() {
+            testEndpointBtn.disabled = true;
+            testEndpointBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing upload endpoint via Node.js proxy...');
+
+            try {
+                const response = await fetch('/api/vps/test-upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ test: true })
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Test Upload Endpoint Response (via Node.js proxy)', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    showStatus('success', 'Test endpoint is working via proxy!');
+                } else {
+                    showStatus('error', result.error || 'Test failed');
+                }
+            } catch (error) {
+                displayResponse('Test Endpoint Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Test failed: ' + error.message);
+            } finally {
+                testEndpointBtn.disabled = false;
+                testEndpointBtn.innerHTML = '<i class="fas fa-vial"></i> Test Upload Endpoint';
+            }
+        }
+
+        async function cleanupTempFiles() {
+            cleanupBtn.disabled = true;
+            cleanupBtn.innerHTML = '<div class="loading-spinner"></div> Cleaning...';
+            showStatus('info', 'Cleaning up temp files via Node.js proxy...');
+
+            try {
+                const response = await fetch('/api/vps/cleanup-temp-files', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Cleanup Response (via Node.js proxy)', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    showStatus('success', `Cleanup complete via proxy: ${result.vpsResponse?.data?.cleaned || 0} files cleaned, ${result.vpsResponse?.data?.errors || 0} errors`);
+                } else {
+                    showStatus('error', result.error || 'Cleanup failed');
+                }
+            } catch (error) {
+                displayResponse('Cleanup Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Cleanup failed: ' + error.message);
+            } finally {
+                cleanupBtn.disabled = false;
+                cleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Cleanup Temp Files';
+            }
+        }
+
+        async function checkConnection() {
+            checkConnectionBtn.disabled = true;
+            checkConnectionBtn.innerHTML = '<div class="loading-spinner"></div> Checking...';
+            showStatus('info', 'Checking VPS connection via Node.js proxy...');
+
+            try {
+                const response = await fetch('/api/vps/test-connection', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('VPS Connection Test Response (via Node.js proxy)', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    showStatus('success', 'VPS connection successful via Node.js proxy!');
+                } else {
+                    showStatus('error', `VPS connection failed: ${result.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                displayResponse('VPS Connection Error', {
+                    error: error.message,
+                    stack: error.stack,
+                    possibleCauses: [
+                        'Node.js server is not running',
+                        'VPS server is down',
+                        'Network connectivity issues',
+                        'API key configuration problems'
+                    ]
+                });
+                showStatus('error', 'VPS connection failed: ' + error.message);
+            } finally {
+                checkConnectionBtn.disabled = false;
+                checkConnectionBtn.innerHTML = '<i class="fas fa-wifi"></i> Check VPS Connection';
+            }
+        }
+
+        async function testCors() {
+            testCorsBtn.disabled = true;
+            testCorsBtn.innerHTML = '<div class="loading-spinner"></div> Testing CORS...';
+            showStatus('info', 'Testing CORS configuration via Node.js proxy...');
+
+            try {
+                const response = await fetch('/api/vps/test-cors', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('CORS Test Response (via Node.js proxy)', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result,
+                    browserInfo: {
+                        currentOrigin: window.location.origin,
+                        currentUrl: window.location.href
+                    },
+                    note: 'CORS is no longer an issue since we use Node.js proxy!'
+                });
+
+                if (result.success) {
+                    showStatus('success', 'CORS test completed via Node.js proxy - no CORS issues!');
+                } else {
+                    showStatus('error', 'CORS test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('CORS Test Error', {
+                    error: error.message,
+                    stack: error.stack,
+                    browserInfo: {
+                        currentOrigin: window.location.origin,
+                        currentUrl: window.location.href
+                    },
+                    note: 'With Node.js proxy, CORS issues are eliminated!'
+                });
+                showStatus('error', 'CORS test failed: ' + error.message);
+            } finally {
+                testCorsBtn.disabled = false;
+                testCorsBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Test CORS';
+            }
+        }
+
+        async function debugOrigin() {
+            debugOriginBtn.disabled = true;
+            debugOriginBtn.innerHTML = '<div class="loading-spinner"></div> Debugging...';
+            showStatus('info', 'Debugging Node.js proxy setup...');
+
+            try {
+                // Test the proxy setup
+                const response = await fetch('/api/vps/test-connection', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Node.js Proxy Debug Response', {
+                    requestInfo: {
+                        browserOrigin: window.location.origin,
+                        browserUrl: window.location.href,
+                        proxyEndpoint: '/api/vps/test-connection',
+                        targetVPS: 'https://crca-artifacts-contentmanagement.site'
+                    },
+                    responseInfo: {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: Object.fromEntries(response.headers.entries())
+                    },
+                    responseData: result,
+                    analysis: {
+                        proxyWorking: result.success,
+                        vpsReachable: result.vpsResponse?.status === 200,
+                        noCorsIssues: true,
+                        architecture: 'Browser → Node.js (localhost:3002) → VPS PHP'
+                    }
+                });
+
+                if (result.success) {
+                    showStatus('success', 'Node.js proxy is working perfectly! No CORS issues.');
+                } else {
+                    showStatus('error', 'Proxy debug failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Proxy Debug Error', {
+                    error: error.message,
+                    stack: error.stack,
+                    browserInfo: {
+                        currentOrigin: window.location.origin,
+                        currentUrl: window.location.href
+                    },
+                    note: 'Make sure your Node.js server is running on localhost:3002'
+                });
+                showStatus('error', 'Proxy debug failed: ' + error.message);
+            } finally {
+                debugOriginBtn.disabled = false;
+                debugOriginBtn.innerHTML = '<i class="fas fa-bug"></i> Debug Origin';
+            }
+        }
+
+        async function testFetch() {
+            testFetchBtn.disabled = true;
+            testFetchBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing fetch function availability...');
+
+            try {
+                const response = await fetch('/api/vps/test-fetch', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Fetch Function Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    showStatus('success', `Fetch function test successful! ${result.data.fetchType} available.`);
+                } else {
+                    showStatus('error', 'Fetch function test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Fetch Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Fetch test failed: ' + error.message);
+            } finally {
+                testFetchBtn.disabled = false;
+                testFetchBtn.innerHTML = '<i class="fas fa-code"></i> Test Fetch Function';
+            }
+        }
+
+        async function testDirect() {
+            testDirectBtn.disabled = true;
+            testDirectBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing direct VPS response...');
+
+            try {
+                const response = await fetch('/api/vps/test-direct', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Direct VPS Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.data.isHtml) {
+                        showStatus('error', 'VPS is returning HTML error page instead of JSON!');
+                    } else if (result.data.isJson) {
+                        showStatus('success', 'VPS is returning JSON correctly!');
+                    } else {
+                        showStatus('warning', 'VPS response format unclear - check details above');
+                    }
+                } else {
+                    showStatus('error', 'Direct VPS test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Direct VPS Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Direct VPS test failed: ' + error.message);
+            } finally {
+                testDirectBtn.disabled = false;
+                testDirectBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Test Direct VPS';
+            }
+        }
+
+        async function testFileUploadEndpoint() {
+            testFileUploadBtn.disabled = true;
+            testFileUploadBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing VPS file upload endpoint with test file...');
+
+            try {
+                const response = await fetch('/api/vps/test-file-upload', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('VPS File Upload Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.data.response.success) {
+                        showStatus('success', 'VPS file upload endpoint is working correctly!');
+                    } else {
+                        showStatus('error', `VPS file upload failed: ${result.data.response.error || 'Unknown error'}`);
+                    }
+                } else {
+                    showStatus('error', 'File upload test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('File Upload Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'File upload test failed: ' + error.message);
+            } finally {
+                testFileUploadBtn.disabled = false;
+                testFileUploadBtn.innerHTML = '<i class="fas fa-file-upload"></i> Test File Upload';
+            }
+        }
+
+        async function debugUpload() {
+            debugUploadBtn.disabled = true;
+            debugUploadBtn.innerHTML = '<div class="loading-spinner"></div> Debugging...';
+            showStatus('info', 'Debugging upload to see exactly what PHP receives...');
+
+            try {
+                const response = await fetch('/api/vps/debug-upload', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Debug Upload Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.data.responseBody.includes('No file uploaded')) {
+                        showStatus('error', 'PHP still reports "No file uploaded" - check request format');
+                    } else if (result.data.responseBody.includes('success')) {
+                        showStatus('success', 'Debug upload successful - PHP received the file!');
+                    } else {
+                        showStatus('warning', 'Debug upload completed - check response details above');
+                    }
+                } else {
+                    showStatus('error', 'Debug upload failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Debug Upload Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Debug upload failed: ' + error.message);
+            } finally {
+                debugUploadBtn.disabled = false;
+                debugUploadBtn.innerHTML = '<i class="fas fa-bug"></i> Debug Upload';
+            }
+        }
+
+        async function testSimpleUpload() {
+            testSimpleUploadBtn.disabled = true;
+            testSimpleUploadBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing simple text file upload...');
+
+            try {
+                const response = await fetch('/api/vps/test-simple-upload', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Simple Upload Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.data.status === 200) {
+                        showStatus('success', 'Simple upload test successful! PHP backend received the file.');
+                    } else {
+                        showStatus('error', `Simple upload failed: ${result.data.response}`);
+                    }
+                } else {
+                    showStatus('error', 'Simple upload test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Simple Upload Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Simple upload test failed: ' + error.message);
+            } finally {
+                testSimpleUploadBtn.disabled = false;
+                testSimpleUploadBtn.innerHTML = '<i class="fas fa-file-text"></i> Test Simple Upload';
+            }
+        }
+
+        async function testPhpDebug() {
+            testPhpDebugBtn.disabled = true;
+            testPhpDebugBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing what PHP controller receives...');
+
+            try {
+                const response = await fetch('/api/vps/test-php-debug', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('PHP Debug Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.data.status === 200) {
+                        showStatus('success', 'PHP debug test successful! Check the response for detailed file info.');
+                    } else {
+                        showStatus('error', `PHP debug test failed: ${result.data.response}`);
+                    }
+                } else {
+                    showStatus('error', 'PHP debug test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('PHP Debug Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'PHP debug test failed: ' + error.message);
+            } finally {
+                testPhpDebugBtn.disabled = false;
+                testPhpDebugBtn.innerHTML = '<i class="fas fa-code"></i> Test PHP Debug';
+            }
+        }
+
+        async function testServer() {
+            testServerBtn.disabled = true;
+            testServerBtn.innerHTML = '<div class="loading-spinner"></div> Testing...';
+            showStatus('info', 'Testing server with updated code...');
+
+            try {
+                const response = await fetch('/api/test-server', {
+                    method: 'GET'
+                });
+
+                const result = await response.json();
+                
+                displayResponse('Server Test Response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    data: result
+                });
+
+                if (result.success) {
+                    if (result.nativeFetchTest && result.nodeFetchTest) {
+                        showStatus('success', 'Server is running perfectly! Both native fetch and node-fetch are working.');
+                    } else if (result.nativeFetchTest) {
+                        showStatus('success', 'Server is running! Native fetch is working (node-fetch not needed for form-data).');
+                    } else {
+                        showStatus('error', 'Server is running but fetch is not working properly.');
+                    }
+                } else {
+                    showStatus('error', 'Server test failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                displayResponse('Server Test Error', {
+                    error: error.message,
+                    stack: error.stack
+                });
+                showStatus('error', 'Server test failed: ' + error.message);
+            } finally {
+                testServerBtn.disabled = false;
+                testServerBtn.innerHTML = '<i class="fas fa-server"></i> Test Server';
+            }
+        }
+
+        // Utility Functions
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function showStatus(type, message) {
+            status.className = `status ${type} show`;
+            status.textContent = message;
+            
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => {
+                    status.classList.remove('show');
+                }, 5000);
+            }
+        }
+
+        function displayResponse(title, data) {
+            const timestamp = new Date().toLocaleString();
+            const responseText = `[${timestamp}] ${title}
+${'='.repeat(50)}
+
+${JSON.stringify(data, null, 2)}
+
+${'='.repeat(50)}
+
+`;
+            
+            responseArea.textContent = responseText + responseArea.textContent;
+        }
+
+        // Initialize
+        showStatus('info', 'Remote Upload Test Page loaded. Using Node.js proxy to communicate with VPS PHP backend - no CORS issues!');
+    </script>
+</body>
+</html>

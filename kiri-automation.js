@@ -1902,6 +1902,11 @@ class KiriEngineAutomation {
                     // Close browser after download is complete
                     console.log('Download process completed - closing browser...');
                     
+                    // Emit progress event for auto-upload
+                    if (global.io) {
+                        global.io.emit('progress', { step: 'auto-upload', message: 'Auto-uploading GLB file to VPS...' });
+                    }
+                    
                     // Emit progress event for completion
                     if (global.io) {
                         global.io.emit('progress', { step: 'complete', message: '3D model download completed successfully!' });

@@ -188,6 +188,15 @@
                                     <div class="step-description">Getting your 3D model</div>
                                 </div>
                             </div>
+                            <div class="process-step pending" id="scanStep5">
+                                <div class="step-icon">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                </div>
+                                <div class="step-content">
+                                    <div class="step-title">Auto-Upload</div>
+                                    <div class="step-description">Upload to VPS system</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -280,6 +289,15 @@
                                 <div class="step-content">
                                     <div class="step-title">Download</div>
                                     <div class="step-description">Get your 3D model</div>
+                                </div>
+                            </div>
+                            <div class="process-step pending" id="step5">
+                                <div class="step-icon">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                </div>
+                                <div class="step-content">
+                                    <div class="step-title">Auto-Upload</div>
+                                    <div class="step-description">Upload to VPS system</div>
                                 </div>
                             </div>
                         </div>
@@ -617,13 +635,14 @@
             progressText.textContent = message;
             
             // Update step indicators
-            const steps = ['step1', 'step2', 'step3', 'step4'];
+            const steps = ['step1', 'step2', 'step3', 'step4', 'step5'];
             const stepMap = {
                 'login': 0,
                 'upload': 1,
                 'processing': 2,
                 'download': 3,
-                'complete': 4
+                'auto-upload': 4,
+                'complete': 5
             };
 
             const currentStep = stepMap[step] || 0;
@@ -652,11 +671,11 @@
             });
 
             // Update progress bar
-            const progressPercent = (currentStep / 4) * 100;
+            const progressPercent = (currentStep / 5) * 100;
             progressFill.style.width = progressPercent + '%';
             
             // Show success modal when all steps are completed
-            if (step === 'complete' || currentStep >= 4) {
+            if (step === 'complete' || currentStep >= 5) {
                 console.log('All steps completed! Showing success modal...');
                 setTimeout(() => {
                     showSuccessModal();
@@ -685,6 +704,11 @@
                     pending: { title: 'Download', description: 'Get your 3D model', icon: 'fa-download' },
                     active: { title: 'Downloading', description: 'Preparing your 3D model...', icon: 'fa-cogs' },
                     completed: { title: 'Downloaded', description: '3D model ready for download', icon: 'fa-check' }
+                },
+                4: { // Auto-Upload
+                    pending: { title: 'Auto-Upload', description: 'Upload to VPS system', icon: 'fa-cloud-upload-alt' },
+                    active: { title: 'Uploading', description: 'Uploading GLB to VPS...', icon: 'fa-cogs' },
+                    completed: { title: 'Uploaded', description: 'GLB file uploaded to VPS', icon: 'fa-check' }
                 }
             };
 
@@ -798,7 +822,7 @@
             }
             
             // Reset step indicators for upload tab
-            const steps = ['step1', 'step2', 'step3', 'step4'];
+            const steps = ['step1', 'step2', 'step3', 'step4', 'step5'];
             steps.forEach((step, index) => {
                 const stepElement = document.getElementById(step);
                 if (stepElement) {
