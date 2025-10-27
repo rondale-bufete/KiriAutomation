@@ -208,16 +208,16 @@ class Scanner {
             console.log('Turntable rotation will be controlled by the scanning pipeline');
 
             // Start monitoring for project cards
-                this.showStatus('info', 'Page reload monitoring started automatically');
-                this.startMonitoring();
+            this.showStatus('info', 'Page reload monitoring started automatically');
+            this.startMonitoring();
 
         } catch (error) {
             console.error('Error in startLiveScanning:', error);
             this.showStatus('error', 'Error starting Live Scanning: ' + error.message);
-            
+
             // Stop turntable rotation on error
             this.stopTurntableRotation();
-            
+
             // Reset scanning state on error
             this.isScanning = false;
             this.updateMonitoringUI();
@@ -239,7 +239,7 @@ class Scanner {
             console.log('Triggering MacroDroid webhook...');
 
             // Base webhook URL
-            const baseUrl = 'https://trigger.macrodroid.com/2f11520b-ff4c-478f-93f8-a878809f1ce0/trigger-kiri-scan';
+            const baseUrl = 'https://trigger.macrodroid.com/23c404a9-1fd4-4ae7-acb7-9c7ba51da4ea/trigger-kiri-scan';
 
             // Add parameters as query string (MacroDroid prefers GET with query parameters)
             const params = new URLSearchParams({
@@ -912,42 +912,42 @@ class Scanner {
     initializeSocketConnection() {
         try {
             console.log('🔌 Initializing Socket.IO connection...');
-                this.socket = io();
+            this.socket = io();
 
             // Set up event listeners
-                this.socket.on('connect', () => {
+            this.socket.on('connect', () => {
                 console.log('🔌 Socket.IO connected successfully');
-                });
+            });
 
-                this.socket.on('disconnect', () => {
+            this.socket.on('disconnect', () => {
                 console.log('🔌 Socket.IO disconnected');
             });
 
             this.socket.on('reload-status', (data) => {
                 console.log('Received reload status update:', data);
                 this.updateMonitoringStatus(data);
-                });
+            });
 
-                // Listen for Arduino port updates
-                this.socket.on('arduino-ports-list', (data) => {
-                    console.log('Received Arduino ports list:', data);
-                    this.updatePortStatus(data);
-                });
+            // Listen for Arduino port updates
+            this.socket.on('arduino-ports-list', (data) => {
+                console.log('Received Arduino ports list:', data);
+                this.updatePortStatus(data);
+            });
 
-                this.socket.on('arduino-port-connected', (data) => {
-                    console.log('Arduino connected:', data);
-                    this.updatePortConnectionStatus(data, true);
-                });
+            this.socket.on('arduino-port-connected', (data) => {
+                console.log('Arduino connected:', data);
+                this.updatePortConnectionStatus(data, true);
+            });
 
-                this.socket.on('arduino-port-disconnected', (data) => {
-                    console.log('Arduino disconnected:', data);
-                    this.updatePortConnectionStatus(data, false);
-                });
+            this.socket.on('arduino-port-disconnected', (data) => {
+                console.log('Arduino disconnected:', data);
+                this.updatePortConnectionStatus(data, false);
+            });
 
-                this.socket.on('arduino-data', (data) => {
-                    console.log('Received Arduino data:', data);
-                    this.handleArduinoData(data);
-                });
+            this.socket.on('arduino-data', (data) => {
+                console.log('Received Arduino data:', data);
+                this.handleArduinoData(data);
+            });
 
             this.socket.on('port-error', (data) => {
                 console.error('Arduino port error:', data);
@@ -958,7 +958,7 @@ class Scanner {
             this.socket.on('remote-scan-trigger', (data) => {
                 console.log('🌐 SCANNING: Remote scan trigger received:', data);
                 this.showStatus('info', 'Remote scan triggered from CI4 app');
-                
+
                 // Automatically start the scanning process
                 setTimeout(() => {
                     this.startLiveScanning();
@@ -1298,7 +1298,7 @@ class Scanner {
     updateScanningProgress(step, message) {
         console.log(`🔄 updateScanningProgress: step=${step}, message=${message}`);
         console.log(`🔄 updateScanningProgress: pipelineSteps length:`, this.pipelineSteps.length);
-        
+
         // Map progress steps to pipeline steps (same as upload pipeline)
         const stepMap = {
             'login': 0,
@@ -1331,7 +1331,7 @@ class Scanner {
                 stepElement.classList.add('active');
                 this.updateStepText(stepElement, i, 'active', message);
                 console.log(`🔄 Step ${i}: Updated to active with message: ${message}`);
-                
+
                 // Handle turntable rotation for specific steps
                 if (i === 1 && step === 'upload') {
                     // Start turntable rotation for "Capturing Artifact" step
@@ -1361,10 +1361,10 @@ class Scanner {
         // Show success modal when complete
         if (step === 'complete' || currentStep >= 4) {
             console.log('All steps completed! Showing success modal...');
-            
+
             // Stop turntable rotation when process completes
             this.stopTurntableRotation();
-            
+
             setTimeout(() => {
                 this.showSuccessModal();
             }, 1000);
@@ -1431,11 +1431,11 @@ class Scanner {
         try {
             console.log('🎠 TURNTABLE: Starting turntable rotation...');
             console.log('🎠 TURNTABLE: Checking turntable connection...');
-            
+
             // Check if turntable is connected
             const isConnected = this.isTurntableConnected();
             console.log('🎠 TURNTABLE: Connection status:', isConnected);
-            
+
             if (!isConnected) {
                 console.warn('🎠 TURNTABLE: Not connected, cannot start rotation');
                 return false;
@@ -1445,7 +1445,7 @@ class Scanner {
             console.log('🎠 TURNTABLE: Sending F command to start rotation...');
             const success = this.rotateTurntableForward();
             console.log('🎠 TURNTABLE: rotateTurntableForward result:', success);
-            
+
             if (success) {
                 console.log('🎠 TURNTABLE: Turntable rotation started successfully');
                 return true;
@@ -1466,7 +1466,7 @@ class Scanner {
     stopTurntableRotation() {
         try {
             console.log('🎠 TURNTABLE: Stopping turntable rotation...');
-            
+
             // Send single S command to stop rotation
             const success = this.stopTurntable();
             if (success) {
@@ -1476,7 +1476,7 @@ class Scanner {
                 console.warn('🎠 TURNTABLE: Failed to stop turntable rotation');
                 return false;
             }
-            
+
         } catch (error) {
             console.error('🎠 TURNTABLE: Error stopping turntable rotation:', error);
             return false;
@@ -1490,13 +1490,13 @@ class Scanner {
         // Check if arduino port monitor is available and connected
         console.log('🎠 TURNTABLE: Checking connection...');
         console.log('🎠 TURNTABLE: window.arduinoPortManager exists:', !!window.arduinoPortManager);
-        
+
         if (window.arduinoPortManager) {
             const isConnected = window.arduinoPortManager.isConnected;
             console.log('🎠 TURNTABLE: arduinoPortManager.isConnected:', isConnected);
             return isConnected;
         }
-        
+
         console.log('🎠 TURNTABLE: No arduinoPortManager found');
         return false;
     }
