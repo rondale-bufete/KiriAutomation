@@ -1367,6 +1367,8 @@ class Scanner {
 
             setTimeout(() => {
                 this.showSuccessModal();
+                // Clear form and delete uploads after completion
+                this.clearFormAndUploads();
             }, 1000);
         }
     }
@@ -1421,6 +1423,35 @@ class Scanner {
             console.log('Success modal should now be visible');
         } else {
             console.error('Success modal element not found!');
+        }
+    }
+
+    /**
+     * Clear form and delete uploads folder contents after pipeline completion
+     */
+    async clearFormAndUploads() {
+        console.log('Clearing form and deleting uploads...');
+        
+        // Clear the scan form
+        this.clearScanForm();
+        
+        // Delete uploads folder contents via API
+        try {
+            const response = await fetch('/api/clear-uploads', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                console.log('✅ Uploads folder cleared successfully');
+            } else {
+                console.error('❌ Failed to clear uploads folder:', result.error);
+            }
+        } catch (error) {
+            console.error('❌ Error clearing uploads folder:', error);
         }
     }
 

@@ -26,6 +26,9 @@ const io = new Server(server, {
   }
 });
 
+// Expose io globally for other modules if needed
+global.io = io;
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -35,22 +38,29 @@ app.use(express.static('public'));
 const downloadsDir = path.join(__dirname, 'downloads');
 fs.ensureDirSync(downloadsDir);
 
+// Ensure uploads directory exists for CI4 uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+fs.ensureDirSync(uploadsDir);
+
 // Serve files from downloads directory
 app.use('/downloads', express.static('downloads'));
 
 // Serve files from extracted directory
 app.use('/extracted', express.static('extracted'));
 
+// Serve files from uploads directory
+app.use('/uploads', express.static('uploads'));
+
 // API endpoint to list downloaded files
 app.get('/api/downloads', (req, res) => {
   try {
     const downloadsDir = path.join(__dirname, 'downloads');
-    
+
     // Check if downloads directory exists
     if (!fs.existsSync(downloadsDir)) {
       return res.json({ success: true, files: [] });
     }
-    
+
     const files = fs.readdirSync(downloadsDir)
       .filter(file => {
         const filePath = path.join(downloadsDir, file);
@@ -67,7 +77,7 @@ app.get('/api/downloads', (req, res) => {
         };
       })
       .sort((a, b) => new Date(b.created) - new Date(a.created)); // Sort by newest first
-    
+
     res.json({ success: true, files });
   } catch (error) {
     console.error('Error listing downloads:', error);
@@ -90,19 +100,19 @@ app.get('/api/extracted', async (req, res) => {
 app.post('/api/remote-trigger', async (req, res) => {
   try {
     const { action, token, data } = req.body;
-    
+
     // Simple authentication (you can enhance this)
     const expectedToken = process.env.REMOTE_TRIGGER_TOKEN || 'kiri-automation-2024';
-    
+
     if (!token || token !== expectedToken) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Unauthorized - Invalid token' 
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized - Invalid token'
       });
     }
-    
+
     console.log('🌐 Remote trigger received:', { action, data });
-    
+
     switch (action) {
       case 'start-scan':
         // Trigger the scanning process
@@ -112,14 +122,14 @@ app.post('/api/remote-trigger', async (req, res) => {
             data: data || {}
           });
         }
-        
-        res.json({ 
-          success: true, 
+
+        res.json({
+          success: true,
           message: 'Scan triggered successfully',
           timestamp: new Date().toISOString()
         });
         break;
-        
+
       case 'check-status':
         // Return current status
         const status = {
@@ -128,42 +138,42 @@ app.post('/api/remote-trigger', async (req, res) => {
           uptime: process.uptime(),
           memory: process.memoryUsage()
         };
-        
-        res.json({ 
-          success: true, 
+
+        res.json({
+          success: true,
           status: status
         });
         break;
-        
+
       case 'get-models':
         // Return list of 3D models
         try {
           const extractedFiles = await zipExtractor.getExtractedFiles();
-          res.json({ 
-            success: true, 
+          res.json({
+            success: true,
             models: extractedFiles,
             count: extractedFiles.length
           });
         } catch (error) {
-          res.status(500).json({ 
-            success: false, 
-            error: 'Failed to get models: ' + error.message 
+          res.status(500).json({
+            success: false,
+            error: 'Failed to get models: ' + error.message
           });
         }
         break;
-        
+
       default:
-        res.status(400).json({ 
-          success: false, 
-          error: 'Unknown action: ' + action 
+        res.status(400).json({
+          success: false,
+          error: 'Unknown action: ' + action
         });
     }
-    
+
   } catch (error) {
     console.error('Remote trigger error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -173,27 +183,27 @@ app.get('/api/test-explorer', (req, res) => {
   const { spawn } = require('child_process');
   const path = require('path');
   const os = require('os');
-  
+
   if (os.platform() === 'win32') {
     const testPath = path.join(__dirname, 'extracted');
     console.log('Testing file explorer with path:', testPath);
-    
+
     const child = spawn('cmd', ['/c', 'start', '""', `"${testPath}"`], {
       detached: true,
       stdio: 'ignore',
       shell: true
     });
-    
+
     child.on('error', (error) => {
       console.error('Test failed:', error);
       res.json({ success: false, error: error.message });
     });
-    
+
     child.on('spawn', () => {
       console.log('Test command spawned successfully');
       res.json({ success: true, message: 'Test command executed' });
     });
-    
+
     child.unref();
   } else {
     res.json({ success: false, error: 'Not Windows' });
@@ -204,36 +214,36 @@ app.get('/api/test-explorer', (req, res) => {
 app.post('/api/open-folder', async (req, res) => {
   try {
     const { folderName } = req.body;
-    
+
     if (!folderName) {
       return res.status(400).json({ success: false, error: 'Folder name is required' });
     }
-    
+
     const folderPath = path.join(__dirname, 'extracted', folderName);
-    
+
     // Check if folder exists
     if (!fs.existsSync(folderPath)) {
       return res.status(404).json({ success: false, error: 'Folder not found' });
     }
-    
+
     // Open folder in file explorer based on operating system
     const { spawn } = require('child_process');
     const os = require('os');
     const platform = os.platform();
-    
+
     let command, args;
-    
+
     if (platform === 'win32') {
       // Windows - use batch file for more reliable execution
       const windowsPath = folderPath.replace(/\//g, '\\');
       console.log(`Opening folder in file explorer: ${folderPath}`);
       console.log(`Windows path: ${windowsPath}`);
-      
+
       const { spawn } = require('child_process');
       const batchFilePath = path.join(__dirname, 'open-folder.bat');
-      
+
       console.log(`Using batch file: ${batchFilePath}`);
-      
+
       // Execute the batch file
       const child = spawn(batchFilePath, [`"${windowsPath}"`], {
         detached: true,
@@ -241,43 +251,43 @@ app.post('/api/open-folder', async (req, res) => {
         shell: true,
         cwd: __dirname
       });
-      
+
       child.on('error', (error) => {
         console.error('Batch file execution failed:', error);
-        
+
         // Fallback: try direct explorer command
         console.log('Trying direct explorer command as fallback...');
         const explorerChild = spawn('explorer', [windowsPath], {
           detached: true,
           stdio: 'ignore'
         });
-        
+
         explorerChild.on('error', (error2) => {
           console.error('Explorer fallback also failed:', error2);
         });
-        
+
         explorerChild.on('spawn', () => {
           console.log('Explorer fallback spawned successfully');
         });
-        
+
         explorerChild.unref();
       });
-      
+
       child.on('spawn', () => {
         console.log('Batch file spawned successfully');
       });
-      
+
       child.unref();
     } else if (platform === 'darwin') {
       // macOS
       command = 'open';
       args = [folderPath];
-      
+
       console.log(`Opening folder in file explorer: ${folderPath}`);
       console.log(`Command: ${command} ${args.join(' ')}`);
-      
-      const child = spawn(command, args, { 
-        detached: true, 
+
+      const child = spawn(command, args, {
+        detached: true,
         stdio: 'ignore'
       });
       child.unref();
@@ -285,23 +295,23 @@ app.post('/api/open-folder', async (req, res) => {
       // Linux
       command = 'xdg-open';
       args = [folderPath];
-      
+
       console.log(`Opening folder in file explorer: ${folderPath}`);
       console.log(`Command: ${command} ${args.join(' ')}`);
-      
-      const child = spawn(command, args, { 
-        detached: true, 
+
+      const child = spawn(command, args, {
+        detached: true,
         stdio: 'ignore'
       });
       child.unref();
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'File explorer opened successfully',
       folderPath: folderPath
     });
-    
+
   } catch (error) {
     console.error('Error opening folder:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -340,9 +350,45 @@ const upload = multer({
   }
 });
 
+// Configure multer for CI4 uploads (saves to uploads directory)
+const ci4Storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const ci4UploadDir = path.join(__dirname, 'uploads');
+    fs.ensureDirSync(ci4UploadDir);
+    cb(null, ci4UploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Keep original filename for easier tracking
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'ci4-' + uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const ci4Upload = multer({
+  storage: ci4Storage,
+  limits: {
+    fileSize: 1024 * 1024 * 1024, // 1GB limit per file
+    files: 150 // Allow up to 150 files
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|mp4|mov|avi/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image and video files are allowed!'));
+    }
+  }
+});
+
 // Global variables for automation management
 let automation = null;
 let isProcessing = false;
+
+// Make automation accessible globally for zip-extractor
+global.automation = null;
 
 // Routes
 app.get('/', (req, res) => {
@@ -381,8 +427,11 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     });
     await automation.init();
 
+    // Update global automation reference
+    global.automation = automation;
+
     // Emit progress update
-    io.emit('progress', { step: 'login', message: 'Logging in to Kiri Engine...' });
+    broadcastProgress('login', 'Logging in to Kiri Engine...');
 
     // Login to Kiri Engine
     console.log('Configuration check:');
@@ -401,11 +450,11 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     }
 
     // Emit progress update
-    io.emit('progress', { step: 'upload', message: `Uploading ${req.files.length} files...` });
+    broadcastProgress('upload', `Uploading ${req.files.length} files...`);
 
     // Upload all files at once
     const filePaths = req.files.map(file => file.path);
-    io.emit('progress', { step: 'upload', message: `Uploading ${req.files.length} files to Kiri Engine...` });
+    broadcastProgress('upload', `Uploading ${req.files.length} files to Kiri Engine...`);
 
     const uploadResult = await automation.uploadMultipleFiles(filePaths);
     if (!uploadResult.success) {
@@ -418,7 +467,7 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     }
 
     // Emit progress update
-    io.emit('progress', { step: 'processing', message: 'Processing photogrammetry with multiple images...' });
+    broadcastProgress('processing', 'Processing photogrammetry with multiple images...');
 
     // Wait for project completion and handle export/download
     const exportResult = await automation.waitForProjectCompletionAndExport();
@@ -432,10 +481,10 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     }
 
     // Emit progress update
-    io.emit('progress', { step: 'download', message: '3D model download completed!' });
+    broadcastProgress('download', '3D model download completed!');
 
     // Emit auto-upload progress (the zip-extractor will handle the actual upload)
-    io.emit('progress', { step: 'auto-upload', message: 'Auto-uploading GLB file to VPS...' });
+    broadcastProgress('auto-upload', 'Auto-uploading GLB file to VPS...');
 
     // Clean up uploaded files
     for (const uploadedFile of req.files) {
@@ -447,12 +496,13 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     try {
       await automation.close();
       automation = null; // Reset automation instance
+      global.automation = null; // Reset global reference
     } catch (e) {
       console.log('Error closing automation:', e.message);
     }
 
     isProcessing = false;
-    io.emit('progress', { step: 'complete', message: 'Processing completed successfully!' });
+    broadcastProgress('complete', 'Processing completed successfully!');
 
     res.json({
       success: true,
@@ -469,6 +519,7 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
       try {
         await automation.close();
         automation = null; // Reset automation instance
+        global.automation = null; // Reset global reference
       } catch (e) {
         console.log('Error closing automation during error cleanup:', e.message);
       }
@@ -480,7 +531,7 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
         await fs.remove(uploadedFile.path);
       }
     }
-    io.emit('progress', { step: 'error', message: `Error: ${error.message}` });
+    broadcastProgress('error', `Error: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -490,6 +541,114 @@ app.get('/status', (req, res) => {
     isProcessing: isProcessing,
     automationInitialized: automation !== null
   });
+});
+
+// CI4 Remote Upload Endpoint - Saves files to uploads directory
+// File watcher will automatically detect and process them
+// Use any() to accept files[0], files[1], etc. format from PHP cURL
+app.post('/api/ci4/upload', ci4Upload.any(), async (req, res) => {
+  // Authentication check
+  const apiKey = req.headers['x-api-key'] || req.body.api_key || req.query.api_key;
+  const expectedApiKey = config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024';
+
+  if (!apiKey || apiKey !== expectedApiKey) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized - Invalid or missing API key'
+    });
+  }
+
+  // Handle any() format - req.files is an array of all uploaded files
+  // PHP sends files[0], files[1], etc. which multer.any() accepts
+  const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+
+  if (!uploadedFiles || uploadedFiles.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'No files uploaded'
+    });
+  }
+
+  try {
+    console.log(`📤 CI4 Upload: Saved ${uploadedFiles.length} file(s) to uploads directory`);
+
+    // Files are now saved in the uploads directory
+    // The file watcher will automatically detect and process them
+
+    res.json({
+      success: true,
+      message: `${uploadedFiles.length} file(s) uploaded successfully. Processing will start automatically.`,
+      fileCount: uploadedFiles.length,
+      files: uploadedFiles.map(file => ({
+        name: file.filename,
+        originalName: file.originalname,
+        size: file.size,
+        path: file.path
+      }))
+    });
+  } catch (error) {
+    console.error('CI4 Upload Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API endpoint to clear uploads folder
+app.post('/api/clear-uploads', async (req, res) => {
+  try {
+    const uploadsDir = path.join(__dirname, 'uploads');
+
+    // Check if uploads directory exists
+    if (!fs.existsSync(uploadsDir)) {
+      return res.json({
+        success: true,
+        message: 'Uploads directory does not exist',
+        deletedCount: 0
+      });
+    }
+
+    // Read all files in uploads directory
+    const files = await fs.readdir(uploadsDir);
+    let deletedCount = 0;
+    const errors = [];
+
+    // Delete each file
+    for (const file of files) {
+      try {
+        const filePath = path.join(uploadsDir, file);
+        const stats = await fs.stat(filePath);
+
+        // Only delete files, not directories
+        if (stats.isFile()) {
+          await fs.remove(filePath);
+          deletedCount++;
+          console.log(`🗑️ Deleted upload file: ${file}`);
+        }
+      } catch (error) {
+        console.error(`Error deleting file ${file}:`, error.message);
+        errors.push({ file, error: error.message });
+      }
+    }
+
+    console.log(`✅ Cleared uploads folder: ${deletedCount} files deleted`);
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${deletedCount} file(s) from uploads folder`,
+      deletedCount: deletedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('Error clearing uploads folder:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to clear uploads folder'
+    });
+  }
 });
 
 // Add endpoint to reset processing state if needed
@@ -510,16 +669,22 @@ app.post('/reset', async (req, res) => {
 // Remote Upload Proxy Routes - Proxy requests to VPS PHP backend
 // This eliminates CORS issues by having the Node.js server make the requests
 
-// Configuration for VPS PHP backend
+// Configuration for VPS PHP backend - uses config.js for easy updates
 const VPS_CONFIG = {
-  baseUrl: process.env.VPS_PHP_URL || 'https://crca-artifacts-contentmanagement.site',
-  apiKey: process.env.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system'
+  baseUrl: config.VPS_BASE_URL || 'http://localhost:8080',
+  apiKey: config.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system'
+};
+
+// Configuration for CI4 backend progress updates
+const CI4_CONFIG = {
+  baseUrl: config.CI4_BASE_URL || 'http://localhost:8080',
+  apiKey: config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024'
 };
 
 // Helper function to make requests to VPS
 async function makeVPSRequest(endpoint, options = {}) {
   const url = `${VPS_CONFIG.baseUrl}${endpoint}`;
-  
+
   const defaultOptions = {
     headers: {
       'X-API-Key': VPS_CONFIG.apiKey,
@@ -527,13 +692,13 @@ async function makeVPSRequest(endpoint, options = {}) {
       ...options.headers
     }
   };
-  
+
   const requestOptions = { ...defaultOptions, ...options };
-  
+
   try {
     console.log(`🌐 Making VPS request to: ${url}`);
     console.log(`🌐 Request options:`, JSON.stringify(requestOptions, null, 2));
-    
+
     // Use native fetch (available in Node.js 18+) or fallback to node-fetch
     let response;
     if (typeof fetch !== 'undefined') {
@@ -544,14 +709,14 @@ async function makeVPSRequest(endpoint, options = {}) {
       const fetch = require('node-fetch');
       response = await fetch(url, requestOptions);
     }
-    
+
     const data = await response.text();
-    
+
     let jsonData;
     try {
       // Check if response is HTML (error page) or JSON
       if (data.trim().startsWith('<!DOCTYPE') || data.trim().startsWith('<html')) {
-        jsonData = { 
+        jsonData = {
           error: 'VPS returned HTML error page instead of JSON',
           html_response: data.substring(0, 500) + '...',
           status_code: response.status,
@@ -561,13 +726,13 @@ async function makeVPSRequest(endpoint, options = {}) {
         jsonData = JSON.parse(data);
       }
     } catch (e) {
-      jsonData = { 
+      jsonData = {
         parse_error: e.message,
         raw_response: data.substring(0, 500) + '...',
         response_type: 'non-json'
       };
     }
-    
+
     return {
       status: response.status,
       statusText: response.statusText,
@@ -583,6 +748,52 @@ async function makeVPSRequest(endpoint, options = {}) {
     });
     throw error;
   }
+}
+
+// Helper to send progress updates to CI4 app
+async function sendCI4ProgressUpdate(step, message) {
+  const url = `${CI4_CONFIG.baseUrl}/api/automation/progress`;
+
+  const body = {
+    step,
+    message,
+    source: 'node-automation',
+    timestamp: new Date().toISOString()
+  };
+
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': CI4_CONFIG.apiKey
+    },
+    body: JSON.stringify(body)
+  };
+
+  try {
+    if (typeof fetch !== 'undefined') {
+      await fetch(url, options);
+    } else {
+      const nodeFetch = require('node-fetch');
+      await nodeFetch(url, options);
+    }
+  } catch (error) {
+    console.error('CI4 progress update error:', error.message);
+  }
+}
+
+// Central helper to broadcast progress to both Socket.IO clients and CI4
+function broadcastProgress(step, message) {
+  try {
+    io.emit('progress', { step, message });
+  } catch (e) {
+    console.error('Error emitting Socket.IO progress event:', e.message);
+  }
+
+  // Fire and forget CI4 update
+  sendCI4ProgressUpdate(step, message).catch(err => {
+    console.error('Error sending CI4 progress update:', err.message);
+  });
 }
 
 // Simple test endpoint to verify server is running new code
@@ -611,7 +822,7 @@ app.get('/api/vps/test-fetch', (req, res) => {
   try {
     const fetchAvailable = typeof fetch !== 'undefined';
     const nodeVersion = process.version;
-    
+
     // Test node-fetch import
     let nodeFetchTest = false;
     try {
@@ -620,7 +831,7 @@ app.get('/api/vps/test-fetch', (req, res) => {
     } catch (e) {
       console.error('Node-fetch import error:', e);
     }
-    
+
     res.json({
       success: true,
       message: 'Fetch function test',
@@ -651,10 +862,10 @@ app.get('/api/vps/test-direct', async (req, res) => {
     const url = `${VPS_CONFIG.baseUrl}/remote-upload/test-upload`;
     console.log(`🌐 Testing direct VPS response from: ${url}`);
     console.log(`🌐 Using API Key: ${VPS_CONFIG.apiKey.substring(0, 20)}...`);
-    
+
     const requestBody = JSON.stringify({ test: true });
     console.log(`🌐 Request body: ${requestBody}`);
-    
+
     // Use native fetch (available in Node.js 18+) or fallback to node-fetch
     let response;
     if (typeof fetch !== 'undefined') {
@@ -683,12 +894,12 @@ app.get('/api/vps/test-direct', async (req, res) => {
         body: requestBody
       });
     }
-    
+
     const data = await response.text();
     console.log(`🌐 VPS Response Status: ${response.status}`);
     console.log(`🌐 VPS Response Headers:`, Object.fromEntries(response.headers.entries()));
     console.log(`🌐 VPS Response Body (first 500 chars):`, data.substring(0, 500));
-    
+
     res.json({
       success: true,
       message: 'Direct VPS test completed',
@@ -718,25 +929,25 @@ app.get('/api/vps/test-direct', async (req, res) => {
 app.get('/api/vps/test-php-debug', async (req, res) => {
   try {
     console.log(`🌐 Testing what PHP controller receives...`);
-    
+
     // Create a very simple test file
     const testContent = 'Hello PHP Controller!';
     const testFileName = 'test-php-debug.txt';
-    
+
     // Create FormData exactly like the main upload
     const FormData = require('form-data');
     const formData = new FormData();
-    
+
     // Add file with same structure as main upload
     formData.append('file', Buffer.from(testContent), {
       filename: testFileName,
       contentType: 'text/plain'
     });
     formData.append('api_key', VPS_CONFIG.apiKey);
-    
+
     const url = `${VPS_CONFIG.baseUrl}/remote-upload/test-upload`;
     console.log(`🌐 Testing PHP debug endpoint: ${url}`);
-    
+
     // Use node-fetch for form-data
     const fetch = require('node-fetch');
     const response = await fetch(url, {
@@ -747,10 +958,10 @@ app.get('/api/vps/test-php-debug', async (req, res) => {
       },
       body: formData
     });
-    
+
     const data = await response.text();
     console.log(`🌐 PHP Debug Response: ${data}`);
-    
+
     res.json({
       success: true,
       message: 'PHP debug test completed',
@@ -774,25 +985,25 @@ app.get('/api/vps/test-php-debug', async (req, res) => {
 app.get('/api/vps/test-simple-upload', async (req, res) => {
   try {
     console.log(`🌐 Testing simple text file upload...`);
-    
+
     // Create a simple text file
     const testContent = 'This is a simple test file for upload debugging';
     const testFileName = 'simple-test.txt';
-    
+
     // Create FormData
     const FormData = require('form-data');
     const formData = new FormData();
-    
+
     // Add simple text file
     formData.append('file', Buffer.from(testContent), {
       filename: testFileName,
       contentType: 'text/plain'
     });
     formData.append('api_key', VPS_CONFIG.apiKey);
-    
+
     const url = `${VPS_CONFIG.baseUrl}/remote-upload/drop-file`;
     console.log(`🌐 Simple upload to: ${url}`);
-    
+
     // Use node-fetch for form-data (native fetch doesn't work with form-data)
     const fetch = require('node-fetch');
     const response = await fetch(url, {
@@ -803,10 +1014,10 @@ app.get('/api/vps/test-simple-upload', async (req, res) => {
       },
       body: formData
     });
-    
+
     const data = await response.text();
     console.log(`🌐 Simple upload response: ${data}`);
-    
+
     res.json({
       success: true,
       message: 'Simple upload test completed',
@@ -830,28 +1041,28 @@ app.get('/api/vps/test-simple-upload', async (req, res) => {
 app.get('/api/vps/debug-upload', async (req, res) => {
   try {
     console.log(`🌐 Debug: Testing what PHP controller receives...`);
-    
+
     // Create a simple test file
     const testContent = 'Debug test file content';
     const testFileName = 'debug-test.txt';
-    
+
     // Create FormData exactly like the real upload
     const FormData = require('form-data');
     const formData = new FormData();
-    
+
     formData.append('file', Buffer.from(testContent), {
       filename: testFileName,
       contentType: 'text/plain'
     });
-    
+
     formData.append('api_key', VPS_CONFIG.apiKey);
-    
+
     const url = `${VPS_CONFIG.baseUrl}/remote-upload/drop-file`;
     console.log(`🌐 Debug upload to: ${url}`);
-    
+
     const formHeaders = formData.getHeaders();
     console.log(`🌐 Debug form headers:`, formHeaders);
-    
+
     // Use native fetch or node-fetch for proper form-data handling
     // Use node-fetch for form-data (native fetch doesn't work with form-data)
     const fetch = require('node-fetch');
@@ -863,12 +1074,12 @@ app.get('/api/vps/debug-upload', async (req, res) => {
       },
       body: formData
     });
-    
+
     const data = await response.text();
     console.log(`🌐 Debug response status: ${response.status}`);
     console.log(`🌐 Debug response headers:`, Object.fromEntries(response.headers.entries()));
     console.log(`🌐 Debug response body:`, data);
-    
+
     res.json({
       success: true,
       message: 'Debug upload test completed',
@@ -897,28 +1108,28 @@ app.get('/api/vps/debug-upload', async (req, res) => {
 app.get('/api/vps/test-file-upload', async (req, res) => {
   try {
     console.log(`🌐 Testing VPS file upload endpoint...`);
-    
+
     // Create a simple test file in memory
     const testContent = 'This is a test file for VPS upload';
     const testFileName = 'test-upload.txt';
-    
+
     // Create FormData
     const FormData = require('form-data');
     const formData = new FormData();
-    
+
     // Add test file
     formData.append('file', Buffer.from(testContent), {
       filename: testFileName,
       contentType: 'text/plain'
     });
-    
+
     // Add API key as form field (PHP controller expects this)
     formData.append('api_key', VPS_CONFIG.apiKey);
-    
+
     const url = `${VPS_CONFIG.baseUrl}/remote-upload/drop-file`;
     console.log(`🌐 Testing file upload to: ${url}`);
     console.log(`🌐 Test file: ${testFileName} (${testContent.length} bytes)`);
-    
+
     // Use native fetch or node-fetch for proper form-data handling
     let response;
     if (typeof fetch !== 'undefined') {
@@ -943,21 +1154,21 @@ app.get('/api/vps/test-file-upload', async (req, res) => {
         body: formData
       });
     }
-    
+
     const data = await response.text();
     console.log(`🌐 VPS File Upload Response Status: ${response.status}`);
     console.log(`🌐 VPS File Upload Response: ${data}`);
-    
+
     let jsonData;
     try {
       jsonData = JSON.parse(data);
     } catch (e) {
-      jsonData = { 
+      jsonData = {
         parse_error: e.message,
         raw_response: data
       };
     }
-    
+
     res.json({
       success: true,
       message: 'VPS file upload test completed',
@@ -990,7 +1201,7 @@ app.get('/api/vps/test-connection', async (req, res) => {
       method: 'POST',
       body: JSON.stringify({ test: true })
     });
-    
+
     res.json({
       success: true,
       message: 'VPS connection successful',
@@ -1017,7 +1228,7 @@ app.get('/api/vps/test-cors', async (req, res) => {
         'Access-Control-Request-Headers': 'Content-Type, X-API-Key'
       }
     });
-    
+
     res.json({
       success: true,
       message: 'CORS test completed',
@@ -1071,17 +1282,17 @@ app.post('/api/vps/upload-file', async (req, res) => {
 
       try {
         console.log(`🌐 Proxying file upload: ${req.file.originalname} (${req.file.size} bytes)`);
-        
+
         // Create FormData for the VPS request
         const FormData = require('form-data');
         const formData = new FormData();
-        
+
         // Add the file with proper field name and options
         // Force GLB files to have the correct MIME type
-        const glbMimeType = req.file.originalname.toLowerCase().endsWith('.glb') 
-          ? 'model/gltf-binary' 
+        const glbMimeType = req.file.originalname.toLowerCase().endsWith('.glb')
+          ? 'model/gltf-binary'
           : (req.file.mimetype || 'application/octet-stream');
-          
+
         // Try different approaches for file upload
         console.log(`🌐 Attempting file upload with:`, {
           fieldName: 'file',
@@ -1089,24 +1300,24 @@ app.post('/api/vps/upload-file', async (req, res) => {
           contentType: glbMimeType,
           size: req.file.size
         });
-        
+
         // Method 1: Use buffer with options
         formData.append('file', req.file.buffer, {
           filename: req.file.originalname,
           contentType: glbMimeType,
           knownLength: req.file.size
         });
-        
+
         // Add API key as form field (PHP controller expects this)
         formData.append('api_key', VPS_CONFIG.apiKey);
-        
+
         console.log(`🌐 FormData fields:`, {
           filename: req.file.originalname,
           size: req.file.size,
           mimetype: req.file.mimetype,
           apiKeyLength: VPS_CONFIG.apiKey.length
         });
-        
+
         // Debug: Log the actual form data structure
         console.log(`🌐 FormData entries:`, formData.getHeaders());
         console.log(`🌐 File buffer length:`, req.file.buffer.length);
@@ -1116,60 +1327,60 @@ app.post('/api/vps/upload-file', async (req, res) => {
           apiKeyField: 'api_key',
           apiKeyValue: VPS_CONFIG.apiKey.substring(0, 20) + '...'
         });
-        
+
         // Make request to VPS
         const url = `${VPS_CONFIG.baseUrl}/remote-upload/drop-file`;
         console.log(`🌐 Uploading to VPS: ${url}`);
-        
+
         // Get form data headers (this includes the boundary)
         const formHeaders = formData.getHeaders();
         console.log(`🌐 Form headers:`, formHeaders);
-        
+
         // CRITICAL: Use node-fetch for form-data uploads (native fetch doesn't work with form-data)
         console.log(`🌐 Using node-fetch for form-data upload (native fetch has form-data issues)`);
-        
+
         // --- CRITICAL FIX FOR NODE-FETCH IMPORT ---
         let fetchFunction;
         try {
-            const nodeFetch = require('node-fetch');
-            console.log(`🌐 DEBUG: node-fetch imported. Type: ${typeof nodeFetch}`);
-            
-            // Handle both v2 (function) and v3+ (object with default export)
-            if (typeof nodeFetch === 'function') {
-                fetchFunction = nodeFetch;
-                console.log(`🌐 DEBUG: Using node-fetch v2 (function)`);
-            } else if (typeof nodeFetch === 'object' && nodeFetch.default) {
-                fetchFunction = nodeFetch.default;
-                console.log(`🌐 DEBUG: Using node-fetch v3+ (object.default)`);
-            } else {
-                console.error(`❌ DEBUG: Unknown node-fetch format. Type: ${typeof nodeFetch}, has default: ${!!nodeFetch.default}`);
-                return res.status(500).json({
-                    success: false,
-                    error: 'Unknown node-fetch format',
-                    message: `node-fetch type: ${typeof nodeFetch}, has default: ${!!nodeFetch.default}`
-                });
-            }
-            
-            if (typeof fetchFunction !== 'function') {
-                console.error(`❌ DEBUG: fetchFunction is not a function! Type: ${typeof fetchFunction}`);
-                return res.status(500).json({
-                    success: false,
-                    error: 'fetchFunction is not a function',
-                    message: `fetchFunction type: ${typeof fetchFunction}`
-                });
-            }
-            
-            console.log(`🌐 DEBUG: fetchFunction ready. Type: ${typeof fetchFunction}`);
-        } catch (e) {
-            console.error(`❌ DEBUG: Failed to import node-fetch: ${e.message}`);
+          const nodeFetch = require('node-fetch');
+          console.log(`🌐 DEBUG: node-fetch imported. Type: ${typeof nodeFetch}`);
+
+          // Handle both v2 (function) and v3+ (object with default export)
+          if (typeof nodeFetch === 'function') {
+            fetchFunction = nodeFetch;
+            console.log(`🌐 DEBUG: Using node-fetch v2 (function)`);
+          } else if (typeof nodeFetch === 'object' && nodeFetch.default) {
+            fetchFunction = nodeFetch.default;
+            console.log(`🌐 DEBUG: Using node-fetch v3+ (object.default)`);
+          } else {
+            console.error(`❌ DEBUG: Unknown node-fetch format. Type: ${typeof nodeFetch}, has default: ${!!nodeFetch.default}`);
             return res.status(500).json({
-                success: false,
-                error: 'node-fetch import failed',
-                message: e.message
+              success: false,
+              error: 'Unknown node-fetch format',
+              message: `node-fetch type: ${typeof nodeFetch}, has default: ${!!nodeFetch.default}`
             });
+          }
+
+          if (typeof fetchFunction !== 'function') {
+            console.error(`❌ DEBUG: fetchFunction is not a function! Type: ${typeof fetchFunction}`);
+            return res.status(500).json({
+              success: false,
+              error: 'fetchFunction is not a function',
+              message: `fetchFunction type: ${typeof fetchFunction}`
+            });
+          }
+
+          console.log(`🌐 DEBUG: fetchFunction ready. Type: ${typeof fetchFunction}`);
+        } catch (e) {
+          console.error(`❌ DEBUG: Failed to import node-fetch: ${e.message}`);
+          return res.status(500).json({
+            success: false,
+            error: 'node-fetch import failed',
+            message: e.message
+          });
         }
         // --- END CRITICAL FIX ---
-        
+
         const response = await fetchFunction(url, {
           method: 'POST',
           headers: {
@@ -1178,27 +1389,27 @@ app.post('/api/vps/upload-file', async (req, res) => {
           },
           body: formData
         });
-        
+
         const data = await response.text();
         console.log(`🌐 VPS Upload Response Status: ${response.status}`);
         console.log(`🌐 VPS Upload Response Headers:`, Object.fromEntries(response.headers.entries()));
         console.log(`🌐 VPS Upload Response: ${data.substring(0, 500)}...`);
-        
+
         // If upload failed, try to get more debug info
         if (response.status !== 200) {
           console.log(`🌐 Full VPS response:`, data);
         }
-        
+
         let jsonData;
         try {
           jsonData = JSON.parse(data);
         } catch (e) {
-          jsonData = { 
+          jsonData = {
             parse_error: e.message,
             raw_response: data.substring(0, 500) + '...'
           };
         }
-        
+
         res.json({
           success: response.ok,
           message: response.ok ? 'File uploaded successfully via proxy!' : 'Upload failed',
@@ -1213,7 +1424,7 @@ app.post('/api/vps/upload-file', async (req, res) => {
             type: req.file.mimetype
           }
         });
-        
+
       } catch (error) {
         console.error('🌐 File upload proxy error:', error);
         res.status(500).json({
@@ -1223,7 +1434,7 @@ app.post('/api/vps/upload-file', async (req, res) => {
         });
       }
     });
-    
+
   } catch (error) {
     console.error('🌐 Upload proxy error:', error);
     res.status(500).json({
@@ -1241,7 +1452,7 @@ app.post('/api/vps/test-upload', async (req, res) => {
       method: 'POST',
       body: JSON.stringify(req.body)
     });
-    
+
     res.json({
       success: true,
       message: 'Test upload proxy successful',
@@ -1263,7 +1474,7 @@ app.post('/api/vps/cleanup-temp-files', async (req, res) => {
       method: 'POST',
       body: JSON.stringify({ api_key: VPS_CONFIG.apiKey })
     });
-    
+
     res.json({
       success: true,
       message: 'Cleanup proxy successful',
@@ -1285,7 +1496,7 @@ app.get('/api/vps/temp-file/:tempName', async (req, res) => {
     const result = await makeVPSRequest(`/remote-upload/temp-file/${tempName}`, {
       method: 'GET'
     });
-    
+
     res.json({
       success: true,
       message: 'Get temp file proxy successful',
@@ -1307,7 +1518,7 @@ app.post('/api/vps/move-temp-file', async (req, res) => {
       method: 'POST',
       body: JSON.stringify(req.body)
     });
-    
+
     res.json({
       success: true,
       message: 'Move temp file proxy successful',
@@ -1592,6 +1803,284 @@ const ZipExtractor = require('./zip-extractor');
 const zipExtractor = new ZipExtractor();
 zipExtractor.startWatching();
 
+// CI4 Uploads File Watcher - Monitors uploads directory and triggers automation
+class CI4UploadWatcher {
+  constructor() {
+    this.uploadsDir = path.join(__dirname, 'uploads');
+    this.watcher = null;
+    this.processingFiles = new Set(); // Track files being processed
+    this.knownFiles = new Set(); // Track known files to detect new ones
+    this.processingTimeout = null;
+    this.batchDelay = 2000; // Wait 2 seconds after last file to process batch
+
+    // Ensure directory exists
+    fs.ensureDirSync(this.uploadsDir);
+
+    // Initialize known files
+    this.initializeKnownFiles();
+
+    console.log('📁 CI4 Upload Watcher initialized');
+    console.log('📁 Watching directory:', this.uploadsDir);
+  }
+
+  /**
+   * Initialize the list of known files
+   */
+  async initializeKnownFiles() {
+    try {
+      if (fs.existsSync(this.uploadsDir)) {
+        const files = await fs.readdir(this.uploadsDir);
+        files.forEach(file => {
+          const filePath = path.join(this.uploadsDir, file);
+          const stats = fs.statSync(filePath);
+          if (stats.isFile() && this.isValidFile(file)) {
+            this.knownFiles.add(file);
+          }
+        });
+        console.log(`📁 Found ${this.knownFiles.size} existing files in uploads directory`);
+      }
+    } catch (error) {
+      console.error('Error initializing known files:', error);
+    }
+  }
+
+  /**
+   * Check if file is a valid image/video file
+   */
+  isValidFile(filename) {
+    const allowedExtensions = /\.(jpeg|jpg|png|mp4|mov|avi)$/i;
+    return allowedExtensions.test(filename);
+  }
+
+  /**
+   * Start watching the uploads directory for new files
+   */
+  startWatching() {
+    console.log('📁 Starting to watch uploads directory for CI4 files...');
+
+    this.watcher = fs.watch(this.uploadsDir, async (eventType, filename) => {
+      if (!filename) return;
+
+      const filePath = path.join(this.uploadsDir, filename);
+
+      // Check if it's a new file (not in known files)
+      if (eventType === 'rename' && fs.existsSync(filePath)) {
+        const stats = await fs.stat(filePath);
+
+        if (stats.isFile() && this.isValidFile(filename) && !this.knownFiles.has(filename)) {
+          console.log('📁 New CI4 file detected:', filename);
+          this.knownFiles.add(filename);
+
+          // Clear existing timeout
+          if (this.processingTimeout) {
+            clearTimeout(this.processingTimeout);
+          }
+
+          // Wait for batch to complete (files might be uploaded in sequence)
+          this.processingTimeout = setTimeout(() => {
+            this.processNewFiles();
+          }, this.batchDelay);
+        }
+      }
+    });
+
+    console.log('📁 CI4 Upload Watcher is now active');
+  }
+
+  /**
+   * Process new files that haven't been processed yet
+   */
+  async processNewFiles() {
+    if (isProcessing) {
+      console.log('📁 Another process is running, will retry later...');
+      return;
+    }
+
+    try {
+      const files = await fs.readdir(this.uploadsDir);
+      const newFiles = files.filter(file => {
+        const filePath = path.join(this.uploadsDir, file);
+        const stats = fs.statSync(filePath);
+        return stats.isFile() &&
+          this.isValidFile(file) &&
+          !this.processingFiles.has(file) &&
+          this.knownFiles.has(file);
+      });
+
+      if (newFiles.length === 0) {
+        console.log('📁 No new files to process');
+        return;
+      }
+
+      console.log(`📁 Found ${newFiles.length} new file(s) to process`);
+
+      // Mark files as being processed
+      newFiles.forEach(file => this.processingFiles.add(file));
+
+      // Trigger the automation process
+      await this.triggerAutomation(newFiles);
+
+    } catch (error) {
+      console.error('📁 Error processing new files:', error);
+    }
+  }
+
+  /**
+   * Trigger the automation process with the new files
+   */
+  async triggerAutomation(files) {
+    isProcessing = true;
+
+    try {
+      // Always create a fresh automation instance for each request
+      if (automation) {
+        console.log('Closing previous automation instance...');
+        try {
+          await automation.close();
+        } catch (e) {
+          console.log('Error closing previous automation:', e.message);
+        }
+      }
+
+      console.log('🚀 Starting Kiri Automation for CI4 uploaded files...');
+      console.log(`📁 Processing ${files.length} file(s)`);
+
+      automation = new KiriEngineAutomation({
+        headless: config.NODE_ENV === 'production',
+        sessionPath: './session',
+        browserType: config.BROWSER_TYPE || 'chromium',
+        executablePath: config.BROWSER_EXECUTABLE_PATH || null
+      });
+      await automation.init();
+
+      // Update global automation reference
+      global.automation = automation;
+
+      // Emit progress update
+      io.emit('progress', { step: 'login', message: 'Logging in to Kiri Engine...' });
+
+      // Login to Kiri Engine
+      if (!config.KIRI_EMAIL || !config.KIRI_PASSWORD) {
+        isProcessing = false;
+        throw new Error('Kiri Engine credentials not found in configuration');
+      }
+
+      const loginResult = await automation.login(config.KIRI_EMAIL, config.KIRI_PASSWORD);
+      if (!loginResult.success) {
+        isProcessing = false;
+        throw new Error(loginResult.message);
+      }
+
+      // Emit progress update
+      io.emit('progress', { step: 'upload', message: `Uploading ${files.length} files from CI4...` });
+
+      // Get full file paths
+      const filePaths = files.map(file => path.join(this.uploadsDir, file));
+      const uploadResult = await automation.uploadMultipleFiles(filePaths);
+
+      if (!uploadResult.success) {
+        isProcessing = false;
+        // Clean up uploaded files
+        for (const file of files) {
+          try {
+            await fs.remove(path.join(this.uploadsDir, file));
+            this.processingFiles.delete(file);
+            this.knownFiles.delete(file);
+          } catch (e) {
+            console.log('Error removing file:', e.message);
+          }
+        }
+        throw new Error(`Upload failed: ${uploadResult.message}`);
+      }
+
+      // Emit progress update
+      io.emit('progress', { step: 'processing', message: 'Processing photogrammetry with multiple images...' });
+
+      // Wait for project completion and handle export/download
+      const exportResult = await automation.waitForProjectCompletionAndExport();
+      if (!exportResult.success) {
+        isProcessing = false;
+        // Clean up uploaded files
+        for (const file of files) {
+          try {
+            await fs.remove(path.join(this.uploadsDir, file));
+            this.processingFiles.delete(file);
+            this.knownFiles.delete(file);
+          } catch (e) {
+            console.log('Error removing file:', e.message);
+          }
+        }
+        throw new Error(exportResult.message);
+      }
+
+      // Emit progress update
+      io.emit('progress', { step: 'download', message: '3D model download completed!' });
+      io.emit('progress', { step: 'auto-upload', message: 'Auto-uploading GLB file to VPS...' });
+
+      // Clean up uploaded files after successful processing
+      for (const file of files) {
+        try {
+          await fs.remove(path.join(this.uploadsDir, file));
+          this.processingFiles.delete(file);
+          this.knownFiles.delete(file);
+        } catch (e) {
+          console.log('Error removing file:', e.message);
+        }
+      }
+
+      // Close automation instance
+      console.log('Closing automation instance after successful processing...');
+      try {
+        await automation.close();
+        automation = null;
+        global.automation = null;
+      } catch (e) {
+        console.log('Error closing automation:', e.message);
+      }
+
+      isProcessing = false;
+      io.emit('progress', { step: 'complete', message: 'Processing completed successfully!' });
+      console.log('✅ CI4 Upload Process Completed Successfully!');
+
+    } catch (error) {
+      isProcessing = false;
+
+      // Clean up automation instance on error
+      if (automation) {
+        console.log('Closing automation instance due to error...');
+        try {
+          await automation.close();
+          automation = null;
+          global.automation = null;
+        } catch (e) {
+          console.log('Error closing automation during error cleanup:', e.message);
+        }
+      }
+
+      // Remove from processing set on error
+      files.forEach(file => this.processingFiles.delete(file));
+
+      io.emit('progress', { step: 'error', message: `Error: ${error.message}` });
+      console.error('❌ CI4 Upload Processing Error:', error);
+    }
+  }
+
+  /**
+   * Stop watching
+   */
+  stopWatching() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+      console.log('📁 CI4 Upload Watcher stopped');
+    }
+  }
+}
+
+// Initialize CI4 Upload Watcher
+const ci4UploadWatcher = new CI4UploadWatcher();
+ci4UploadWatcher.startWatching();
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected');
@@ -1607,10 +2096,10 @@ io.on('connection', (socket) => {
     console.log('🎠 SERVER: Received turntable command:', data.command);
     console.log('🎠 SERVER: Arduino monitor exists:', !!arduinoMonitor);
     console.log('🎠 SERVER: Arduino monitor connected:', arduinoMonitor.isConnected);
-    
+
     const success = arduinoMonitor.sendCommand(data.command);
     console.log('🎠 SERVER: Command send result:', success);
-    
+
     // Send response back to client
     socket.emit('turntable-command-response', {
       command: data.command,

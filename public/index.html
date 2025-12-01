@@ -678,6 +678,8 @@
                 console.log('All steps completed! Showing success modal...');
                 setTimeout(() => {
                     showSuccessModal();
+                    // Clear form and delete uploads after completion
+                    clearFormAndUploads();
                 }, 1000); // Show modal 1 second after completion
             }
         }
@@ -841,6 +843,35 @@
             }
             
             console.log('Form cleared successfully');
+        }
+
+        /**
+         * Clear form and delete uploads folder contents after pipeline completion
+         */
+        async function clearFormAndUploads() {
+            console.log('Clearing form and deleting uploads...');
+            
+            // Clear the form first
+            clearForm();
+            
+            // Delete uploads folder contents via API
+            try {
+                const response = await fetch('/api/clear-uploads', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    console.log('✅ Uploads folder cleared successfully');
+                } else {
+                    console.error('❌ Failed to clear uploads folder:', result.error);
+                }
+            } catch (error) {
+                console.error('❌ Error clearing uploads folder:', error);
+            }
         }
 
         // Check server status on load

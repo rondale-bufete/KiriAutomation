@@ -175,7 +175,7 @@ class KiriEngineAutomation {
                 try {
                     console.log(`Attempting to launch ${currentBrowserType} browser...`);
                     console.log(`Download directory set to: ${appDownloadsDir}`);
-                    
+
                     // Update browser type for this attempt
                     if (currentBrowserType !== this.browserType) {
                         const detectedPath = this.detectBrowserPath(currentBrowserType);
@@ -581,6 +581,10 @@ class KiriEngineAutomation {
                 this.isLoggedIn = true;
                 this.isLoggingIn = false;
                 console.log('Login successful');
+
+                // Check for and close Kiri Engine Pro advertisement modal if it appears
+                await this.closeProAdvertisementModal();
+
                 return { success: true, message: 'Successfully logged in' };
             } else {
                 this.isLoggingIn = false;
@@ -714,6 +718,141 @@ class KiriEngineAutomation {
         }
     }
 
+    /**
+     * Detect and close Kiri Engine Pro advertisement modal if it appears
+     * This modal sometimes appears after login and needs to be closed before proceeding
+     */
+    async closeProAdvertisementModal() {
+        try {
+            console.log('Checking for Kiri Engine Pro advertisement modal...');
+
+            // Wait a moment for modal to appear (if it's going to appear)
+            await this.page.waitForTimeout(2000);
+
+            // Multiple selectors to find the close button
+            const closeButtonSelectors = [
+                'button.close-btn[data-v-17f9c411]',
+                'button.close-btn',
+                'button[data-v-17f9c411].close-btn',
+                '.el-dialog__body button.close-btn',
+                'div[data-v-17f9c411] button.close-btn'
+            ];
+
+            let closeButton = null;
+
+            // Try to find the close button
+            for (const selector of closeButtonSelectors) {
+                try {
+                    closeButton = await this.page.$(selector);
+                    if (closeButton) {
+                        // Verify it's actually the close button by checking if it's visible
+                        const isVisible = await this.page.evaluate((btn) => {
+                            return btn && btn.offsetParent !== null &&
+                                window.getComputedStyle(btn).display !== 'none';
+                        }, closeButton);
+
+                        if (isVisible) {
+                            console.log(`Found Pro advertisement modal close button with selector: ${selector}`);
+                            break;
+                        } else {
+                            closeButton = null;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // Alternative: Check if modal exists by looking for modal body with specific content
+            if (!closeButton) {
+                console.log('Close button not found with direct selectors, checking for modal body...');
+
+                const modalExists = await this.page.evaluate(() => {
+                    // Look for modal body with the specific data attribute
+                    const modalBody = document.querySelector('div.el-dialog__body');
+                    if (modalBody) {
+                        // Check if it contains the Pro advertisement content
+                        const hasProContent = modalBody.querySelector('div[data-v-17f9c411]') !== null ||
+                            modalBody.textContent.includes('biggest sale') ||
+                            modalBody.textContent.includes('55% OFF') ||
+                            modalBody.textContent.includes('Kiri Engine Pro');
+
+                        if (hasProContent) {
+                            // Find close button within this modal
+                            const closeBtn = modalBody.querySelector('button.close-btn');
+                            return closeBtn !== null;
+                        }
+                    }
+                    return false;
+                });
+
+                if (modalExists) {
+                    console.log('Pro advertisement modal detected, trying to find close button...');
+                    // Try again with a more specific selector
+                    closeButton = await this.page.$('.el-dialog__body button.close-btn');
+                }
+            }
+
+            if (closeButton) {
+                console.log('Closing Kiri Engine Pro advertisement modal...');
+
+                // Try clicking the close button
+                try {
+                    await closeButton.click();
+                    console.log('Successfully clicked close button');
+
+                    // Wait for modal to disappear
+                    await this.page.waitForTimeout(1000);
+
+                    // Verify modal is closed
+                    const modalStillOpen = await this.page.evaluate(() => {
+                        const modalBody = document.querySelector('div.el-dialog__body');
+                        if (modalBody) {
+                            const hasProContent = modalBody.querySelector('div[data-v-17f9c411]') !== null ||
+                                modalBody.textContent.includes('biggest sale') ||
+                                modalBody.textContent.includes('55% OFF');
+                            return hasProContent;
+                        }
+                        return false;
+                    });
+
+                    if (!modalStillOpen) {
+                        console.log('✅ Pro advertisement modal closed successfully');
+                    } else {
+                        console.log('⚠️ Modal may still be open, trying alternative close method...');
+                        // Try pressing Escape key as fallback
+                        await this.page.keyboard.press('Escape');
+                        await this.page.waitForTimeout(500);
+                    }
+                } catch (clickError) {
+                    console.log('Error clicking close button, trying JavaScript click...', clickError.message);
+                    // Fallback: Use JavaScript click
+                    try {
+                        await this.page.evaluate((btn) => {
+                            if (btn) {
+                                btn.click();
+                            }
+                        }, closeButton);
+                        await this.page.waitForTimeout(1000);
+                        console.log('Closed modal using JavaScript click');
+                    } catch (jsError) {
+                        console.log('JavaScript click also failed, trying Escape key...', jsError.message);
+                        // Last resort: Press Escape
+                        await this.page.keyboard.press('Escape');
+                        await this.page.waitForTimeout(500);
+                    }
+                }
+            } else {
+                console.log('No Pro advertisement modal detected - proceeding normally');
+            }
+
+        } catch (error) {
+            console.log('Error checking/closing Pro advertisement modal:', error.message);
+            // Don't throw error - just log it and continue
+            // The modal might not appear every time, so this is not critical
+        }
+    }
+
     async configureProjectSettings() {
         try {
             console.log('Configuring project settings...');
@@ -721,132 +860,215 @@ class KiriEngineAutomation {
             // Wait for project setup page to load
             await this.page.waitForTimeout(2000);
 
-            // Set file format to GLB using exact selectors
-            console.log('Setting file format to GLB...');
+            // Enable Auto Object Masking switch (new UI)
+            console.log('Enabling Auto Object Masking switch...');
+            const autoMaskSelectors = [
+                'div[data-v-3f51526f] .switch.k-slider-switch',
+                '.form-item__content .switch.k-slider-switch',
+                '.switch.k-slider-switch'
+            ];
+            let autoMaskSwitch = null;
 
-            // Find the File Format section by looking for form items with "File Format" text
-            const formItems = await this.page.$$('div[data-v-955c126f].form_item');
-            let fileFormatSection = null;
-
-            for (const item of formItems) {
-                const text = await this.page.evaluate(el => el.textContent, item);
-                if (text && text.includes('File Format')) {
-                    fileFormatSection = item;
-                    console.log('File Format section found by text search');
-                    break;
-                }
-            }
-
-            // Check if dropdown is already open
-            const dropdownOpen = await this.page.$('div[data-v-955c126f].select-list_wrap.is-expanded');
-            if (!dropdownOpen) {
-                console.log('Dropdown not open, clicking to open...');
-
-                let clicked = false;
-                if (fileFormatSection) {
-                    // Try to find the k-input-wrap within the File Format section
-                    const inputWrap = await fileFormatSection.$('div[data-v-955c126f].k-input-wrap');
-                    if (inputWrap) {
-                        console.log('Found File Format input wrap, clicking...');
-                        await inputWrap.click();
-                        await this.page.waitForTimeout(1000);
-                        clicked = true;
+            for (const selector of autoMaskSelectors) {
+                try {
+                    const element = await this.page.$(selector);
+                    if (element) {
+                        autoMaskSwitch = element;
+                        console.log(`Auto Object Masking switch found with selector: ${selector}`);
+                        break;
                     }
+                } catch (e) {
+                    continue;
                 }
+            }
 
-                // Fallback: try to find any k-input-wrap that might be the file format dropdown
-                if (!clicked) {
-                    const allInputWraps = await this.page.$$('div[data-v-955c126f].k-input-wrap');
-                    for (const wrap of allInputWraps) {
-                        // Check if this input wrap contains a readonly input (dropdown indicator)
-                        const readonlyInput = await wrap.$('input[readonly]');
-                        if (readonlyInput) {
-                            console.log('Found readonly input in k-input-wrap, clicking...');
-                            await wrap.click();
-                            await this.page.waitForTimeout(1000);
-                            clicked = true;
-                            break;
-                        }
+            if (autoMaskSwitch) {
+                const isChecked = await autoMaskSwitch.evaluate(el => {
+                    const input = el.querySelector('input[type="checkbox"]');
+                    if (input) return input.checked;
+                    return el.classList.contains('is-checked') || el.classList.contains('switch--checked');
+                });
+
+                if (!isChecked) {
+                    console.log('Auto Object Masking is disabled, enabling now...');
+                    const switchTarget = await autoMaskSwitch.$('.switch__core') || autoMaskSwitch;
+                    try {
+                        await switchTarget.click();
+                    } catch (clickError) {
+                        console.log('Primary click failed, trying alternative click for Auto Object Masking...', clickError.message);
+                        await autoMaskSwitch.click();
                     }
-                }
-
-                if (!clicked) {
-                    console.log('Could not find File Format dropdown to click');
-                }
-            } else {
-                console.log('File Format dropdown is already open');
-            }
-
-            // Look for GLB option in the dropdown
-            const allOptions = await this.page.$$('li[data-v-955c126f]');
-            let glbOption = null;
-
-            for (const option of allOptions) {
-                const text = await this.page.evaluate(el => el.textContent, option);
-                if (text && text.trim() === 'GLB') {
-                    glbOption = option;
-                    console.log('GLB option found');
-                    break;
-                }
-            }
-
-            if (glbOption) {
-                await glbOption.click();
-                console.log('GLB format selected');
-                await this.page.waitForTimeout(1000);
-            } else {
-                console.log('GLB option not found in dropdown');
-            }
-
-            // Set texture resolution to 2K
-            console.log('Setting texture resolution to 2K...');
-
-            // Find texture resolution dropdown by looking for inputs with resolution values
-            const allInputs = await this.page.$$('input.k-input-inner');
-            let textureInput = null;
-
-            for (const input of allInputs) {
-                const inputText = await this.page.evaluate(el => el.value, input);
-                if (inputText && (inputText.includes('4K') || inputText.includes('2K') || inputText.includes('1K'))) {
-                    textureInput = input;
-                    console.log('Texture resolution input found');
-                    break;
-                }
-            }
-
-            if (textureInput) {
-                // Find the parent k-input-wrap div and click on it
-                const parentDiv = await this.page.evaluateHandle(input => input.closest('.k-input-wrap'), textureInput);
-                if (parentDiv) {
-                    console.log('Texture resolution dropdown found, clicking...');
-                    await parentDiv.click();
-                    await this.page.waitForTimeout(1000);
-
-                    // Look for 2K option in the dropdown
-                    const allOptions = await this.page.$$('li[data-v-955c126f]');
-                    let twoKOption = null;
-
-                    for (const option of allOptions) {
-                        const text = await this.page.evaluate(el => el.textContent, option);
-                        if (text && text.trim() === '2K') {
-                            twoKOption = option;
-                            console.log('2K option found');
-                            break;
-                        }
-                    }
-
-                    if (twoKOption) {
-                        await twoKOption.click();
-                        console.log('2K texture resolution selected');
-                        await this.page.waitForTimeout(1000);
-                    } else {
-                        console.log('2K option not found in texture resolution dropdown');
-                    }
+                    await this.page.waitForTimeout(800);
+                    console.log('Auto Object Masking enabled');
                 } else {
-                    console.log('Texture resolution dropdown parent not found');
+                    console.log('Auto Object Masking already enabled');
                 }
             } else {
-                console.log('Texture resolution input not found');
+                console.log('Auto Object Masking switch not found (UI may have changed)');
+            }
+
+            // Set file format to GLB using updated selectors
+            console.log('Setting file format to GLB (new UI selectors)...');
+            const fileFormatSelectors = [
+                'div[data-v-3f51526f].k-input.k-select',
+                '.form-item__content .k-input.k-select',
+                '.k-input.k-select'
+            ];
+            let fileFormatDropdown = null;
+
+            for (const selector of fileFormatSelectors) {
+                try {
+                    const candidates = await this.page.$$(selector);
+                    for (const candidate of candidates) {
+                        const textContent = await this.page.evaluate(el => el.textContent || '', candidate);
+                        if (textContent && (textContent.includes('OBJ') || textContent.includes('GLB'))) {
+                            fileFormatDropdown = candidate;
+                            console.log(`File format dropdown found with selector: ${selector}`);
+                            break;
+                        }
+                    }
+                    if (fileFormatDropdown) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (fileFormatDropdown) {
+                let dropdownClicked = false;
+                const inputWrap = await fileFormatDropdown.$('.k-input-wrap');
+                if (inputWrap) {
+                    try {
+                        await inputWrap.click();
+                        dropdownClicked = true;
+                    } catch (e) {
+                        console.log('Failed to click input wrap, falling back to entire dropdown:', e.message);
+                    }
+                }
+
+                if (!dropdownClicked) {
+                    try {
+                        await fileFormatDropdown.click();
+                    } catch (e) {
+                        console.log('Failed to click file format dropdown:', e.message);
+                    }
+                }
+
+                await this.page.waitForTimeout(800);
+
+                const optionSelectors = [
+                    'div[data-v-3f51526f].select-list_wrap li',
+                    '.select-list_wrap li'
+                ];
+                let glbOption = null;
+
+                for (const selector of optionSelectors) {
+                    try {
+                        const options = await this.page.$$(selector);
+                        for (const option of options) {
+                            const optionText = await this.page.evaluate(el => el.textContent.trim(), option);
+                            if (optionText === 'GLB') {
+                                glbOption = option;
+                                console.log('GLB option located');
+                                break;
+                            }
+                        }
+                        if (glbOption) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (glbOption) {
+                    await glbOption.click();
+                    console.log('GLB format selected');
+                    await this.page.waitForTimeout(800);
+                } else {
+                    console.log('GLB option not found in updated dropdown');
+                }
+            } else {
+                console.log('File format dropdown not found - selectors may need updating');
+            }
+
+            // Set texture resolution to 4K (new UI)
+            console.log('Setting texture resolution to 4K...');
+            const textureSelectors = [
+                'div[data-v-3f51526f].form-item__content .k-input.k-select',
+                '.form-item__content .k-input.k-select',
+                '.k-input.k-select'
+            ];
+            let textureDropdown = null;
+
+            for (const selector of textureSelectors) {
+                try {
+                    const candidates = await this.page.$$(selector);
+                    for (const candidate of candidates) {
+                        const textContent = await this.page.evaluate(el => el.textContent || '', candidate);
+                        if (textContent && (textContent.includes('8K') || textContent.includes('4K') || textContent.includes('2K'))) {
+                            textureDropdown = candidate;
+                            console.log(`Texture resolution dropdown candidate found with selector: ${selector}`);
+                            break;
+                        }
+                    }
+                    if (textureDropdown) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (textureDropdown) {
+                let dropdownClicked = false;
+                const textureInputWrap = await textureDropdown.$('.k-input-wrap');
+                if (textureInputWrap) {
+                    try {
+                        await textureInputWrap.click();
+                        dropdownClicked = true;
+                    } catch (e) {
+                        console.log('Failed to click texture input wrap, falling back to entire dropdown:', e.message);
+                    }
+                }
+
+                if (!dropdownClicked) {
+                    try {
+                        await textureDropdown.click();
+                    } catch (e) {
+                        console.log('Failed to click texture dropdown:', e.message);
+                    }
+                }
+
+                await this.page.waitForTimeout(800);
+
+                const textureOptionSelectors = [
+                    'div[data-v-3f51526f].select-list_wrap li',
+                    '.select-list_wrap li'
+                ];
+                let fourKOption = null;
+
+                for (const selector of textureOptionSelectors) {
+                    try {
+                        const options = await this.page.$$(selector);
+                        for (const option of options) {
+                            const optionText = await this.page.evaluate(el => el.textContent.trim(), option);
+                            if (optionText === '4K') {
+                                fourKOption = option;
+                                console.log('4K texture option located');
+                                break;
+                            }
+                        }
+                        if (fourKOption) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (fourKOption) {
+                    await fourKOption.click();
+                    console.log('4K texture resolution selected');
+                    await this.page.waitForTimeout(800);
+                } else {
+                    console.log('4K option not found in texture dropdown');
+                }
+            } else {
+                console.log('Texture resolution dropdown not found - selectors may need updating');
             }
 
             // Set project name if needed
@@ -890,6 +1112,7 @@ class KiriEngineAutomation {
             // Click "Create 3D Model Now" button to start processing
             console.log('Clicking Create 3D Model Now button...');
             const createButtonSelectors = [
+                'button[data-v-3f51526f].mask-button_hover',
                 'button[data-v-955c126f].mask-button_hover',
                 'button.mask-button_hover',
                 'button:has-text("Create 3D Model Now")',
@@ -1147,6 +1370,9 @@ class KiriEngineAutomation {
 
             console.log(`Uploading file: ${filePath}`);
 
+            // Check for and close Kiri Engine Pro advertisement modal if it appears
+            await this.closeProAdvertisementModal();
+
             // First, click on Photo Scan to start the upload process
             console.log('Clicking Photo Scan to start upload process...');
             const photoScanSelectors = [
@@ -1295,6 +1521,9 @@ class KiriEngineAutomation {
             }
 
             console.log(`Uploading ${filePaths.length} files`);
+
+            // Check for and close Kiri Engine Pro advertisement modal if it appears
+            await this.closeProAdvertisementModal();
 
             // First, click on Photo Scan to start the upload process
             console.log('Clicking Photo Scan to start upload process...');
@@ -1505,6 +1734,105 @@ class KiriEngineAutomation {
         }
     }
 
+    /**
+     * Click fullscreen button and take a screenshot of the 3D model
+     * Returns the path to the saved screenshot
+     */
+    async clickFullscreenAndTakeScreenshot() {
+        try {
+            console.log('Looking for fullscreen button...');
+
+            // Find the fullscreen button
+            const fullscreenButtonSelectors = [
+                'div.screenfull button[data-v-97fcb96b]',
+                'div[data-v-97fcb96b].screenfull button',
+                'div.screenfull button',
+                'button:has(svg[viewBox="0 0 26 26"])'
+            ];
+
+            let fullscreenButton = null;
+            for (const selector of fullscreenButtonSelectors) {
+                try {
+                    fullscreenButton = await this.page.$(selector);
+                    if (fullscreenButton) {
+                        // Verify it's the fullscreen button by checking for the SVG icon
+                        const hasFullscreenIcon = await this.page.evaluate((btn) => {
+                            const svg = btn.querySelector('svg');
+                            return svg !== null;
+                        }, fullscreenButton);
+
+                        if (hasFullscreenIcon) {
+                            console.log(`Fullscreen button found with selector: ${selector}`);
+                            break;
+                        } else {
+                            fullscreenButton = null;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!fullscreenButton) {
+                console.log('Fullscreen button not found, trying alternative search...');
+                // Try to find by looking for the screenfull div
+                const screenfullDiv = await this.page.$('div.screenfull, div[data-v-97fcb96b].screenfull');
+                if (screenfullDiv) {
+                    fullscreenButton = await screenfullDiv.$('button');
+                    if (fullscreenButton) {
+                        console.log('Fullscreen button found via screenfull div');
+                    }
+                }
+            }
+
+            if (fullscreenButton) {
+                console.log('Clicking fullscreen button...');
+                await fullscreenButton.click();
+
+                // Wait for fullscreen to activate
+                await this.page.waitForTimeout(1500);
+
+                console.log('Taking screenshot in fullscreen mode...');
+
+                // Generate screenshot filename with timestamp
+                const timestamp = Date.now();
+                const screenshotFilename = `model_screenshot_${timestamp}.png`;
+                const extractedDir = path.resolve(__dirname, 'extracted');
+
+                // Ensure extracted directory exists
+                await fs.ensureDir(extractedDir);
+
+                // Save screenshot to extracted directory
+                const screenshotPath = path.join(extractedDir, screenshotFilename);
+                await this.page.screenshot({
+                    path: screenshotPath,
+                    fullPage: true // Take full page screenshot
+                });
+
+                console.log(`✅ Screenshot saved: ${screenshotPath}`);
+
+                // Exit fullscreen by clicking the button again (optional, but good practice)
+                try {
+                    await fullscreenButton.click();
+                    await this.page.waitForTimeout(500);
+                    console.log('Exited fullscreen mode');
+                } catch (e) {
+                    console.log('Could not exit fullscreen (may have exited automatically):', e.message);
+                }
+
+                return screenshotPath;
+            } else {
+                console.log('⚠️ Fullscreen button not found - skipping screenshot');
+                return null;
+            }
+
+        } catch (error) {
+            console.error('Error taking screenshot:', error.message);
+            // Don't throw error - screenshot is optional
+            return null;
+        }
+    }
+
     async waitForProjectCompletionAndExport() {
         try {
             console.log('Waiting for project to complete processing...');
@@ -1601,6 +1929,15 @@ class KiriEngineAutomation {
             // Wait for model view page to load
             console.log('Waiting for model view page to load...');
             await this.page.waitForTimeout(2000);
+
+            // Click fullscreen button and take screenshot before downloading
+            console.log('Clicking fullscreen button and taking screenshot...');
+            const screenshotPath = await this.clickFullscreenAndTakeScreenshot();
+            if (screenshotPath) {
+                console.log(`Screenshot saved to: ${screenshotPath}`);
+                // Store screenshot path for later use (to move to extracted folder)
+                this.lastScreenshotPath = screenshotPath;
+            }
 
             // Click the Export button
             console.log('Looking for Export button...');
@@ -1894,24 +2231,52 @@ class KiriEngineAutomation {
                             }
                         }
                     }
-
-                    // Additional wait to ensure download is fully processed
-                    console.log('Ensuring download is fully processed...');
-                    await this.page.waitForTimeout(10000); // Increased to 10 seconds
-
-                    // Close browser after download is complete
-                    console.log('Download process completed - closing browser...');
-                    
                     // Emit progress event for auto-upload
                     if (global.io) {
                         global.io.emit('progress', { step: 'auto-upload', message: 'Auto-uploading GLB file to VPS...' });
                     }
-                    
+
                     // Emit progress event for completion
                     if (global.io) {
                         global.io.emit('progress', { step: 'complete', message: '3D model download completed successfully!' });
                     }
-                    
+
+                    // Navigate away from download/share page to mymodel page as soon as we detect success
+                    console.log('Navigating away from download page to mymodel page...');
+                    const currentUrl = this.page.url();
+                    console.log('Current URL before navigation:', currentUrl);
+
+                    // Check if we're on a download/share page (handle variants with/without trailing slash or query)
+                    const isDownloadPage = currentUrl.includes('/share/download') || currentUrl.includes('/download');
+                    if (isDownloadPage) {
+                        console.log('Detected download/share page - navigating to mymodel immediately...');
+                        try {
+                            await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                waitUntil: 'networkidle2',
+                                timeout: 30000
+                            });
+                            await this.page.waitForTimeout(2000);
+                            console.log('Successfully navigated to mymodel page');
+                        } catch (navError) {
+                            console.log('Navigation to mymodel failed, trying again...', navError.message);
+                            // Retry navigation with a more lenient strategy
+                            try {
+                                await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                    waitUntil: 'domcontentloaded',
+                                    timeout: 30000
+                                });
+                                await this.page.waitForTimeout(2000);
+                                console.log('Successfully navigated to mymodel page (fallback)');
+                            } catch (retryError) {
+                                console.log('Retry navigation also failed:', retryError.message);
+                            }
+                        }
+                    }
+
+                    // Logout and close browser after download is complete
+                    console.log('Download process completed - logging out and closing browser...');
+                    await this.logout();
+
                     await this.close();
 
                     return { success: true, message: '3D model export and download completed' };
@@ -1927,6 +2292,174 @@ class KiriEngineAutomation {
         } catch (error) {
             console.error('Export process error:', error.message);
             return { success: false, message: `Export process failed: ${error.message}` };
+        }
+    }
+
+    /**
+     * Logout from Kiri Engine account
+     * Navigates to mymodel page, clicks avatar, and logs out
+     */
+    async logout() {
+        try {
+            console.log('Logging out from Kiri Engine...');
+
+            // Check current URL and navigate away from download/share pages
+            const currentUrl = this.page.url();
+            console.log('Current URL before logout navigation:', currentUrl);
+
+            // Navigate back to mymodel page (especially if we're on a download/share page)
+            console.log('Navigating to mymodel page...');
+
+            // If we're on a download/share page, use a more aggressive navigation approach
+            if (currentUrl.includes('/share/download/') || currentUrl.includes('/download/')) {
+                console.log('Detected download/share page - using direct navigation...');
+                try {
+                    // Try to stop any ongoing navigation first
+                    await this.page.evaluate(() => {
+                        if (window.stop) {
+                            window.stop();
+                        }
+                    });
+                    await this.page.waitForTimeout(500);
+                } catch (e) {
+                    // Ignore errors
+                }
+            }
+
+            // Navigate to mymodel page with retry logic
+            let navigationSuccess = false;
+            const maxNavAttempts = 3;
+
+            for (let attempt = 1; attempt <= maxNavAttempts && !navigationSuccess; attempt++) {
+                try {
+                    console.log(`Navigation attempt ${attempt}/${maxNavAttempts}...`);
+                    await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                        waitUntil: 'networkidle2',
+                        timeout: 30000
+                    });
+                    navigationSuccess = true;
+                    console.log('Successfully navigated to mymodel page');
+                } catch (navError) {
+                    console.log(`Navigation attempt ${attempt} failed:`, navError.message);
+                    if (attempt < maxNavAttempts) {
+                        // Try with domcontentloaded as fallback
+                        try {
+                            await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
+                                waitUntil: 'domcontentloaded',
+                                timeout: 30000
+                            });
+                            navigationSuccess = true;
+                            console.log('Successfully navigated using domcontentloaded');
+                        } catch (fallbackError) {
+                            console.log('Fallback navigation also failed:', fallbackError.message);
+                            await this.page.waitForTimeout(2000);
+                        }
+                    }
+                }
+            }
+
+            if (!navigationSuccess) {
+                console.log('⚠️ Failed to navigate to mymodel page after multiple attempts');
+                // Continue anyway - might still be able to find logout button
+            }
+
+            await this.page.waitForTimeout(2000);
+
+            // Find and click the avatar/header-right-item to open dropdown
+            console.log('Looking for avatar/header-right-item to open dropdown...');
+            const avatarSelectors = [
+                'div.header-right-item.avatar-container',
+                'div[data-v-ac439b1a].header-right-item.avatar-container',
+                'div.avatar-container.header-right-item',
+                'div.has-avatar.mask-button_hover',
+                'div[data-v-ac439b1a].has-avatar.mask-button_hover'
+            ];
+
+            let avatarElement = null;
+            for (const selector of avatarSelectors) {
+                try {
+                    avatarElement = await this.page.$(selector);
+                    if (avatarElement) {
+                        console.log(`Avatar element found with selector: ${selector}`);
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!avatarElement) {
+                // Try to find by looking for the has-avatar div
+                const hasAvatarDiv = await this.page.$('div.has-avatar');
+                if (hasAvatarDiv) {
+                    avatarElement = hasAvatarDiv;
+                    console.log('Avatar element found via has-avatar div');
+                }
+            }
+
+            if (avatarElement) {
+                console.log('Clicking avatar to open dropdown...');
+                await avatarElement.click();
+                await this.page.waitForTimeout(1000); // Wait for dropdown to appear
+
+                // Find and click the Log Out button
+                console.log('Looking for Log Out button...');
+                const logoutSelectors = [
+                    'div.log-out.avatar-dropdown-nav',
+                    'div[data-v-ac439b1a].log-out.avatar-dropdown-nav',
+                    'div.avatar-dropdown-nav.log-out',
+                    'a.avatar-dropdown-nav:has-text("Log Out")',
+                    'div.avatar-dropdown-content_item div.log-out'
+                ];
+
+                let logoutButton = null;
+                for (const selector of logoutSelectors) {
+                    try {
+                        logoutButton = await this.page.$(selector);
+                        if (logoutButton) {
+                            // Verify it's the logout button by checking for "Log Out" text
+                            const buttonText = await this.page.evaluate(el => el.textContent, logoutButton);
+                            if (buttonText && buttonText.includes('Log Out')) {
+                                console.log(`Log Out button found with selector: ${selector}`);
+                                break;
+                            } else {
+                                logoutButton = null;
+                            }
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                // Alternative: Find by text content
+                if (!logoutButton) {
+                    console.log('Log Out button not found with selectors, trying text-based search...');
+                    const allDropdownItems = await this.page.$$('div.avatar-dropdown-nav, a.avatar-dropdown-nav');
+                    for (const item of allDropdownItems) {
+                        const itemText = await this.page.evaluate(el => el.textContent, item);
+                        if (itemText && itemText.trim() === 'Log Out') {
+                            logoutButton = item;
+                            console.log('Log Out button found by text content');
+                            break;
+                        }
+                    }
+                }
+
+                if (logoutButton) {
+                    console.log('Clicking Log Out button...');
+                    await logoutButton.click();
+                    await this.page.waitForTimeout(2000); // Wait for logout to complete
+                    console.log('✅ Successfully logged out');
+                } else {
+                    console.log('⚠️ Log Out button not found - may already be logged out');
+                }
+            } else {
+                console.log('⚠️ Avatar element not found - may already be logged out or on different page');
+            }
+
+        } catch (error) {
+            console.error('Error during logout:', error.message);
+            // Don't throw error - logout is optional, we'll still close the browser
         }
     }
 
