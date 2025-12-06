@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blynk Motor Control (Node.js)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .motor-button {
+      transition: all 0.2s ease-in-out;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .motor-button:hover {
+      box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
+      transform: translateY(-2px);
+    }
+    .status-badge {
+      font-weight: 700;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      font-size: 0.875rem;
+      transition: all 0.3s ease;
+    }
+    .pulse-animation {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .5; }
+    }
+    .status-updating { opacity: 0.6; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+  <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+    <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-6">Blynk Device Control (Node.js)</h1>
+    <p class="text-center text-sm text-gray-500 mb-6">Control your ESP32 motor via Virtual Pin V1 using the Blynk HTTP API.</p>
+
+    <!-- Current Status Section -->
+    <div class="mb-8 p-4 bg-blue-50 rounded-lg border border-blue-200">
+      <div class="flex justify-between items-center mb-3 border-b pb-2">
+        <h2 class="text-xl font-semibold text-blue-800">Current Status</h2>
+        <span id="last-update" class="text-xs text-gray-500">Updating...</span>
+      </div>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="text-gray-600">Device Connection:</span>
+          <span id="device-status-badge" class="status-badge bg-gray-400 text-white">Unknown</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-gray-600">Motor (V1 Pin) Status:</span>
+          <span id="motor-status-badge" class="status-badge bg-gray-400 text-white">Unknown</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control Buttons -->
+    <div class="flex flex-col space-y-6">
+      <button id="btn-on" class="motor-button bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-6 rounded-lg text-xl uppercase tracking-wider text-center">
+        Turn Motor ON
+      </button>
+      <button id="btn-off" class="motor-button bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-6 rounded-lg text-xl uppercase tracking-wider text-center">
+        Turn Motor OFF
+      </button>
+    </div>
+
+    <p class="text-xs text-gray-400 text-center mt-8">Note: Ensure your ESP32 is online and using the same Auth Token and V1 Virtual Pin.</p>
+  </div>
+
+  <script>
+    const STATUS_API_URL = '/api/motor/status';
+    const CONTROL_API_URL = '/api/motor/control';
+    const UPDATE_INTERVAL = 3000;
+
+    let updateTimer = null;
+    let isUpdating = false;
+
+    function updateDeviceStatus(status) {
+      const badge = document.getElementById('device-status-badge');
+      badge.classList.remove('bg-green-500', 'bg-red-500', 'bg-gray-400', 'text-white', 'text-gray-900', 'pulse-animation');
+      if (status === 'Online') {
+        badge.classList.add('bg-green-500', 'text-white');
+      } else if (status === 'Offline') {
+        badge.classList.add('bg-red-500', 'text-white', 'pulse-animation');
+      } else {
+        badge.classList.add('bg-gray-400', 'text-white');
+      }
+      badge.textContent = status;
+    }
+
+    function updateMotorStatus(status) {
+      const badge = document.getElementById('motor-status-badge');
+      badge.classList.remove('bg-yellow-500', 'bg-gray-400', 'text-white', 'text-gray-900');
+      if (status === 'ON') {
+        badge.classList.add('bg-yellow-500', 'text-gray-900');
+      } else {
+        badge.classList.add('bg-gray-400', 'text-white');
+      }
+      badge.textContent = status;
+    }
+
+    async function fetchStatus() {
+      if (isUpdating) return;
+      isUpdating = true;
+      const deviceBadge = document.getElementById('device-status-badge');
+      const motorBadge = document.getElementById('motor-status-badge');
+      deviceBadge.classList.add('status-updating');
+      motorBadge.classList.add('status-updating');
+      try {
+        const response = await fetch(STATUS_API_URL, { method: 'GET', headers: { 'Cache-Control': 'no-cache' } });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        updateDeviceStatus(data.device_status || 'Unknown');
+        updateMotorStatus(data.motor_status || 'Unknown');
+        const now = new Date();
+        document.getElementById('last-update').textContent = 'Updated: ' + now.toLocaleTimeString();
+      } catch (err) {
+        console.error('Status fetch error:', err);
+        document.getElementById('last-update').textContent = 'Update failed';
+      } finally {
+        deviceBadge.classList.remove('status-updating');
+        motorBadge.classList.remove('status-updating');
+        isUpdating = false;
+      }
+    }
+
+    function startStatusMonitoring() {
+      fetchStatus();
+      if (updateTimer) clearInterval(updateTimer);
+      updateTimer = setInterval(fetchStatus, UPDATE_INTERVAL);
+    }
+
+    function stopStatusMonitoring() {
+      if (updateTimer) {
+        clearInterval(updateTimer);
+        updateTimer = null;
+      }
+    }
+
+    async function sendMotorCommand(state) {
+      try {
+        const response = await fetch(`${CONTROL_API_URL}/${state}`, { method: 'POST' });
+        const data = await response.json().catch(() => ({}));
+        console.log('Motor control response:', data);
+        // Refresh status after command
+        setTimeout(fetchStatus, 500);
+      } catch (err) {
+        console.error('Motor control error:', err);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('btn-on').addEventListener('click', () => sendMotorCommand('on'));
+      document.getElementById('btn-off').addEventListener('click', () => sendMotorCommand('off'));
+      startStatusMonitoring();
+    });
+
+    window.addEventListener('beforeunload', stopStatusMonitoring);
+  </script>
+</body>
+</html>

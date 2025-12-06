@@ -8,7 +8,6 @@ const fs = require('fs-extra');
 const { Server } = require('socket.io');
 const http = require('http');
 const KiriEngineAutomation = require('./kiri-automation');
-const ArduinoPortMonitor = require('./arduino-port-monitor');
 const config = require('./config');
 
 // Debug configuration loading
@@ -171,6 +170,44 @@ app.post('/api/remote-trigger', async (req, res) => {
 
   } catch (error) {
     console.error('Remote trigger error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Endpoint for CI4 "Start Automated Scanning" button to trigger live scanning via Socket.IO
+app.post('/api/remote/start-live-scanning', async (req, res) => {
+  try {
+    // Authenticate using the same CI4 API key used for /api/ci4/upload
+    const apiKey = req.headers['x-api-key'] || req.body.api_key || req.query.api_key;
+    const expectedApiKey = config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024';
+
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized - Invalid API key'
+      });
+    }
+
+    console.log('🌐 CI4 remote start-live-scanning request received:', req.body);
+
+    if (global.io) {
+      global.io.emit('remote-scan-trigger', {
+        message: 'Remote scan triggered from CI4 start-live-scanning endpoint',
+        data: req.body || {}
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Live scanning triggered successfully',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error handling CI4 start-live-scanning request:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -395,6 +432,11 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Simple motor control test page (mirrors CI4 motor_control_view.php)
+app.get('/motor-test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'motor-test.html'));
+});
+
 app.post('/upload', upload.array('files', 150), async (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: 'No files uploaded' });
@@ -469,6 +511,11 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     // Emit progress update
     broadcastProgress('processing', 'Processing photogrammetry with multiple images...');
 
+    // Turn OFF motor when processing starts
+    console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (server-side)...');
+    await blynkUpdateMotor('off');
+    console.log('🔌 MOTOR: Motor turned OFF successfully (server-side)');
+
     // Wait for project completion and handle export/download
     const exportResult = await automation.waitForProjectCompletionAndExport();
     if (!exportResult.success) {
@@ -480,11 +527,8 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
       return res.status(500).json({ error: exportResult.message });
     }
 
-    // Emit progress update
+    // Emit progress update for completed download
     broadcastProgress('download', '3D model download completed!');
-
-    // Emit auto-upload progress (the zip-extractor will handle the actual upload)
-    broadcastProgress('auto-upload', 'Auto-uploading GLB file to VPS...');
 
     // Clean up uploaded files
     for (const uploadedFile of req.files) {
@@ -502,7 +546,6 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     }
 
     isProcessing = false;
-    broadcastProgress('complete', 'Processing completed successfully!');
 
     res.json({
       success: true,
@@ -541,6 +584,82 @@ app.get('/status', (req, res) => {
     isProcessing: isProcessing,
     automationInitialized: automation !== null
   });
+});
+
+// API to force-close the current automation browser instance (used on scan failure)
+app.post('/api/close-automation', async (req, res) => {
+  try {
+    if (automation && typeof automation.close === 'function') {
+      console.log('API /api/close-automation: Closing automation instance...');
+      await automation.close();
+      automation = null;
+      global.automation = null;
+      return res.json({ success: true, message: 'Automation instance closed.' });
+    }
+
+    return res.json({ success: true, message: 'No active automation instance to close.' });
+  } catch (error) {
+    console.error('Error in /api/close-automation:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// === ESP32 Motor Control via Blynk (Node clone of CI4 MotorController) ===
+
+// JSON API to fetch real-time status
+app.get('/api/motor/status', async (req, res) => {
+  try {
+    const result = {
+      motor_status: 'Unknown',
+      device_status: 'Unknown',
+      timestamp: new Date().toISOString()
+    };
+
+    // 1. Fetch current Virtual Pin V1 status
+    const v1Status = await blynkApiGet('get', '&V1');
+    if (v1Status !== null) {
+      result.motor_status = parseInt(v1Status, 10) === 1 ? 'ON' : 'OFF';
+    }
+
+    // 2. Fetch device connection status
+    const deviceConnected = await blynkApiGet('isHardwareConnected');
+    if (deviceConnected !== null) {
+      result.device_status = deviceConnected.toLowerCase() === 'true' ? 'Online' : 'Offline';
+    }
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Motor status API error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API to control motor ON/OFF (state param like 'on' or 'off')
+app.post('/api/motor/control/:state', async (req, res) => {
+  try {
+    const { state } = req.params;
+    const normalized = String(state || 'off').toLowerCase() === 'on' ? 'on' : 'off';
+
+    const updateResult = await blynkUpdateMotor(normalized);
+
+    if (!updateResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send motor command',
+        details: updateResult
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Motor command sent: ${normalized.toUpperCase()}`,
+      state: normalized,
+      response: updateResult.response || null
+    });
+  } catch (error) {
+    console.error('Motor control API error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // CI4 Remote Upload Endpoint - Saves files to uploads directory
@@ -680,6 +799,67 @@ const CI4_CONFIG = {
   baseUrl: config.CI4_BASE_URL || 'http://localhost:8080',
   apiKey: config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024'
 };
+
+// Blynk motor control configuration (mirrors CI4 MotorController.php)
+const BLYNK_CONFIG = {
+  server: 'blynk.cloud',
+  // IMPORTANT: this is your current CI4 Blynk token. Consider moving to config.js/env for production.
+  token: '36YSJZ3GgnyvR56BHz3ihV5BaEoZOeKd'
+};
+
+// Helper to call Blynk HTTP API via GET
+async function blynkApiGet(endpoint, query = '') {
+  const url = `https://${BLYNK_CONFIG.server}/external/api/${endpoint}?token=${BLYNK_CONFIG.token}${query}`;
+
+  try {
+    let response;
+    if (typeof fetch !== 'undefined') {
+      response = await fetch(url, { method: 'GET' });
+    } else {
+      const nodeFetch = require('node-fetch');
+      response = await nodeFetch(url, { method: 'GET' });
+    }
+
+    if (!response.ok) {
+      console.error('Blynk API GET HTTP error:', response.status, 'for', endpoint);
+      return null;
+    }
+
+    const text = (await response.text()).trim();
+    return text !== '' ? text : null;
+  } catch (error) {
+    console.error('Blynk API GET error for', endpoint, ':', error.message);
+    return null;
+  }
+}
+
+// Helper to update Blynk virtual pin V1 (motor on/off)
+async function blynkUpdateMotor(state = 'off') {
+  const value = String(state).toLowerCase() === 'on' ? 1 : 0;
+  const url = `https://${BLYNK_CONFIG.server}/external/api/update?token=${BLYNK_CONFIG.token}&V1=${value}`;
+
+  try {
+    let response;
+    if (typeof fetch !== 'undefined') {
+      response = await fetch(url, { method: 'GET' });
+    } else {
+      const nodeFetch = require('node-fetch');
+      response = await nodeFetch(url, { method: 'GET' });
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('Blynk update HTTP error:', response.status, text);
+      return { success: false, httpCode: response.status, response: text };
+    }
+
+    const text = await response.text();
+    return { success: true, httpCode: response.status, response: text };
+  } catch (error) {
+    console.error('Blynk update error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
 
 // Helper function to make requests to VPS
 async function makeVPSRequest(endpoint, options = {}) {
@@ -1795,8 +1975,6 @@ app.get('/api/check-processes', async (req, res) => {
 // Make Socket.IO available globally for the automation class
 global.io = io;
 
-// Initialize turntable port monitoring
-const arduinoMonitor = new ArduinoPortMonitor(io);
 
 // Initialize zip extractor
 const ZipExtractor = require('./zip-extractor');
@@ -1996,6 +2174,11 @@ class CI4UploadWatcher {
       // Emit progress update
       io.emit('progress', { step: 'processing', message: 'Processing photogrammetry with multiple images...' });
 
+      // Turn OFF motor when processing starts
+      console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (CI4 upload, server-side)...');
+      await blynkUpdateMotor('off');
+      console.log('🔌 MOTOR: Motor turned OFF successfully (CI4 upload, server-side)');
+
       // Wait for project completion and handle export/download
       const exportResult = await automation.waitForProjectCompletionAndExport();
       if (!exportResult.success) {
@@ -2077,6 +2260,194 @@ class CI4UploadWatcher {
   }
 }
 
+
+// API endpoint to trigger Start Automated Scanning remotely from CI4
+app.post('/api/remote/start-automated-scanning', async (req, res) => {
+  try {
+    // Authenticate using API key
+    const apiKey = req.headers['x-api-key'] || req.body.api_key || req.query.api_key;
+    const expectedApiKey = config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024';
+
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized - Invalid API key'
+      });
+    }
+
+    console.log('🌐 CI4 Remote: Start Automated Scanning request received');
+
+    // Emit Socket.IO event to trigger the scanner on connected clients
+    if (global.io) {
+      global.io.emit('remote-scan-trigger', {
+        message: 'Remote automated scan triggered from CI4',
+        timestamp: new Date().toISOString(),
+        source: 'ci4-api'
+      });
+      console.log('✅ Remote scan trigger event emitted to connected clients');
+    }
+
+    // Also trigger the automation directly on the server side
+    try {
+      // Close existing automation if it exists
+      if (automation) {
+        console.log('Closing existing automation instance...');
+        try {
+          await automation.close();
+        } catch (e) {
+          console.log('Error closing existing automation:', e.message);
+        }
+        automation = null;
+      }
+
+      // Create new automation instance
+      console.log('Creating new automation instance for remote scan...');
+      automation = new KiriEngineAutomation({
+        headless: config.NODE_ENV === 'production',
+        sessionPath: './session',
+        browserType: config.BROWSER_TYPE || 'chromium',
+        executablePath: config.BROWSER_EXECUTABLE_PATH || null
+      });
+
+      await automation.init();
+      global.automation = automation;
+
+      // Broadcast progress
+      broadcastProgress('login', 'Logging in to Kiri Engine...');
+
+      // Login to Kiri Engine
+      if (!config.KIRI_EMAIL || !config.KIRI_PASSWORD) {
+        throw new Error('Kiri Engine credentials not found in configuration');
+      }
+
+      const loginResult = await automation.login(config.KIRI_EMAIL, config.KIRI_PASSWORD);
+      if (!loginResult.success) {
+        throw new Error(loginResult.message);
+      }
+
+      console.log('✅ Kiri Engine login successful via remote trigger');
+
+      // Broadcast progress for capturing step
+      broadcastProgress('upload', 'Capturing photos with turntable rotation...');
+
+      // Start the page reload cycle for monitoring
+      console.log('Starting page reload cycle after successful login...');
+      automation.startPageReloadCycle();
+
+      res.json({
+        success: true,
+        message: 'Automated scanning started successfully from remote trigger',
+        timestamp: new Date().toISOString(),
+        status: 'scanning-in-progress'
+      });
+
+    } catch (automationError) {
+      console.error('❌ Error in server-side automation trigger:', automationError);
+
+      // Even if server-side automation fails, client-side might still work
+      res.json({
+        success: true,
+        message: 'Remote scan trigger sent to clients (server-side automation had issues)',
+        clientTrigger: true,
+        serverTrigger: false,
+        error: automationError.message
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error handling remote scan trigger:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to trigger automated scanning'
+    });
+  }
+});
+
+// API endpoint to check scanning status
+app.get('/api/remote/scanning-status', async (req, res) => {
+  try {
+    // Authenticate using API key
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    const expectedApiKey = config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024';
+
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized - Invalid API key'
+      });
+    }
+
+    const status = {
+      isProcessing: isProcessing,
+      automationInitialized: automation !== null,
+      automationLoggedIn: automation ? await automation.checkLoginStatus() : false,
+      timestamp: new Date().toISOString()
+    };
+
+    res.json({
+      success: true,
+      status: status
+    });
+
+  } catch (error) {
+    console.error('❌ Error checking scanning status:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API endpoint to stop scanning
+app.post('/api/remote/stop-scanning', async (req, res) => {
+  try {
+    // Authenticate using API key
+    const apiKey = req.headers['x-api-key'] || req.body.api_key || req.query.api_key;
+    const expectedApiKey = config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024';
+
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized - Invalid API key'
+      });
+    }
+
+    console.log('🛑 CI4 Remote: Stop scanning request received');
+
+    // Stop monitoring if active
+    if (automation) {
+      try {
+        automation.stopPageReloadCycle();
+        console.log('✅ Page reload monitoring stopped');
+      } catch (e) {
+        console.log('Error stopping monitoring:', e.message);
+      }
+    }
+
+    // Emit stop event to connected clients
+    if (global.io) {
+      global.io.emit('remote-stop-scanning', {
+        message: 'Remote stop scanning triggered from CI4',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Scanning stopped successfully',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error stopping scanning:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Initialize CI4 Upload Watcher
 const ci4UploadWatcher = new CI4UploadWatcher();
 ci4UploadWatcher.startWatching();
@@ -2118,9 +2489,6 @@ process.on('SIGINT', async () => {
   console.log('Shutting down gracefully...');
   if (automation) {
     await automation.close();
-  }
-  if (arduinoMonitor) {
-    arduinoMonitor.cleanup();
   }
   process.exit(0);
 });

@@ -15,7 +15,7 @@ module.exports = {
     // ===========================================
     // BROWSER CONFIGURATION
     // ===========================================
-    BROWSER_TYPE: 'edge', // Options: 'chromium', 'chrome', 'firefox', 'edge'
+    BROWSER_TYPE: 'chrome', // Options: 'chromium', 'chrome', 'firefox', 'edge'
     BROWSER_EXECUTABLE_PATH: null, // Custom browser path (optional)
 
     // ===========================================

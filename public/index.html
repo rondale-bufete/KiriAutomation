@@ -71,31 +71,7 @@
                                 <strong>1.</strong> Download MacroDroid from Google Play Store<br>
                                 <strong>2.</strong> Import our macro file to MacroDroid<br>
                                 <strong>3.</strong> Enable MacroDroid automation<br>
-                                <strong>4.</strong> Connect your turntable to the system
-                            </div>
-                        </div>
-                        
-                        <!-- Turntable Port Detection Section -->
-                        <div class="arduino-port-section">
-                            <div class="port-status-container" id="portStatusContainer">
-                                <div class="port-status-header">
-                                    <i class="fas fa-sync-alt"></i>
-                                    <span>Turntable Connection Status</span>
-                                </div>
-                                <div class="port-status" id="portStatus">
-                                    <div class="port-indicator">
-                                        <span class="indicator-dot disconnected"></span>
-                                        <span class="port-text">No Turntable Connected</span>
-                                    </div>
-                                    <div class="port-details" id="portDetails">
-                                        Waiting for turntable connection...
-                                    </div>
-                                </div>
-                                <div class="port-actions">
-                                    <button class="btn btn-secondary btn-port" id="refreshPortsBtn">
-                                        <i class="fas fa-sync-alt"></i> Refresh Turntable
-                                    </button>
-                                </div>
+                                <strong>4.</strong> Connect your device to the system
                             </div>
                         </div>
 
@@ -386,7 +362,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="scan.js"></script>
-    <script src="arduino-port.js"></script>
     <script>
         // Tab functionality
         const tabButtons = document.querySelectorAll('.tab-btn');
@@ -464,6 +439,10 @@
         let socket = io();
         let modalShouldStayOpen = false;
 
+        // Track whether the Upload Existing Media Files pipeline is currently active
+        // This ensures we don't update the upload pipeline UI for unrelated progress events
+        let isUploadPipelineActive = false;
+
         // Tab switching functionality
         tabButtons.forEach(button => {
             button.addEventListener('click', () => {
@@ -499,6 +478,9 @@
             if (window.scanner && window.scanner.isCurrentlyScanning()) {
                 window.scanner.stopScanning();
             }
+
+            // When leaving the upload-media tab, do NOT auto-activate pipeline.
+            // The upload pipeline should only change when an actual upload is running.
         }
 
         // File selection handlers (Upload tab)
@@ -590,6 +572,12 @@
                 formData.append('files', file);
             });
 
+            // Mark upload pipeline as active only when user explicitly starts upload
+            isUploadPipelineActive = true;
+
+            // Reset upload pipeline UI to initial state for this run
+            resetUploadPipeline();
+
             uploadBtn.disabled = true;
             uploadBtn.innerHTML = '<div class="loading-spinner"></div> Processing...';
             showStatus('info', 'Starting upload and processing...');
@@ -620,6 +608,10 @@
             } finally {
                 uploadBtn.disabled = false;
                 uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Start 3D Processing';
+
+                // Upload request lifecycle complete (success or failure)
+                // We keep isUploadPipelineActive true here so any trailing
+                // Socket.IO progress events still update the pipeline.
             }
         });
 
@@ -627,6 +619,12 @@
 
         // Socket.IO event handlers
         socket.on('progress', (data) => {
+            // Only update the upload pipeline when this tab has initiated an upload
+            if (!isUploadPipelineActive) {
+                console.log('📡 Upload pipeline ignoring progress event (no active upload):', data);
+                return;
+            }
+
             updateProgress(data.step, data.message);
         });
 
@@ -681,6 +679,9 @@
                     // Clear form and delete uploads after completion
                     clearFormAndUploads();
                 }, 1000); // Show modal 1 second after completion
+
+                // Mark upload pipeline as no longer active after completion
+                isUploadPipelineActive = false;
             }
         }
 
@@ -720,6 +721,24 @@
             // Update icon
             const iconElement = titleElement.parentElement.parentElement.querySelector('.step-icon i');
             iconElement.className = `fas ${stepData.icon}`;
+        }
+
+        // Reset the Upload Existing Media Files pipeline to its initial (pending) state
+        function resetUploadPipeline() {
+            const steps = ['step1', 'step2', 'step3', 'step4', 'step5'];
+            steps.forEach((stepId, index) => {
+                const stepElement = document.getElementById(stepId);
+                if (!stepElement) return;
+
+                stepElement.classList.remove('active', 'completed');
+                stepElement.classList.add('pending');
+
+                const stepTitle = stepElement.querySelector('.step-title');
+                const stepDescription = stepElement.querySelector('.step-description');
+                if (stepTitle && stepDescription) {
+                    updateStepText(stepTitle, stepDescription, index, 'pending');
+                }
+            });
         }
 
         // updateScanStepText function is now in scan.js

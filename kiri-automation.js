@@ -90,8 +90,7 @@ class KiriEngineAutomation {
                 downloadsPath: appDownloadsDir,
                 // Add timeout for browser launch
                 timeout: 60000,
-                // Add protocol timeout
-                protocolTimeout: 60000
+
             };
 
             // Add browser-specific configurations
@@ -1735,11 +1734,53 @@ class KiriEngineAutomation {
     }
 
     /**
+     * Wait for the model preview page to finish loading (spinner gone)
+     * before attempting to interact with the fullscreen button.
+     */
+    async waitForModelViewerToLoad(timeoutMs = 15000) {
+        try {
+            console.log('Waiting for model viewer to finish loading (spinner to disappear)...');
+
+            // Poll for the absence of the loading spinner SVG. The spinner uses
+            // a specific lottie <g> / <path> combination, so we detect it by
+            // characteristic attributes instead of brittle exact markup.
+            await this.page.waitForFunction(() => {
+                try {
+                    // Look for the distinctive circular stroke spinner
+                    const paths = Array.from(document.querySelectorAll('svg path'));
+                    const spinnerPath = paths.find(p => {
+                        const stroke = p.getAttribute('stroke') || '';
+                        const strokeWidth = p.getAttribute('stroke-width') || '';
+                        const d = p.getAttribute('d') || '';
+                        return stroke.includes('113,250,248') &&
+                            strokeWidth === '12' &&
+                            d.includes('37.5115');
+                    });
+
+                    // If no such path is present, we assume loading spinner is gone
+                    return !spinnerPath;
+                } catch (e) {
+                    // On any DOM error, fail open so we don't block forever
+                    return true;
+                }
+            }, { timeout: timeoutMs });
+
+            console.log('Model viewer appears to be loaded (spinner not detected).');
+        } catch (error) {
+            // If the spinner never disappears within timeout, log and continue.
+            console.log('Timeout or error while waiting for model viewer spinner:', error.message);
+        }
+    }
+
+    /**
      * Click fullscreen button and take a screenshot of the 3D model
      * Returns the path to the saved screenshot
      */
     async clickFullscreenAndTakeScreenshot() {
         try {
+            // Ensure the 3D viewer is fully loaded before interacting
+            await this.waitForModelViewerToLoad();
+
             console.log('Looking for fullscreen button...');
 
             // Find the fullscreen button
@@ -2231,17 +2272,8 @@ class KiriEngineAutomation {
                             }
                         }
                     }
-                    // Emit progress event for auto-upload
-                    if (global.io) {
-                        global.io.emit('progress', { step: 'auto-upload', message: 'Auto-uploading GLB file to VPS...' });
-                    }
 
-                    // Emit progress event for completion
-                    if (global.io) {
-                        global.io.emit('progress', { step: 'complete', message: '3D model download completed successfully!' });
-                    }
-
-                    // Navigate away from download/share page to mymodel page as soon as we detect success
+                    // Navigate away from download/share page as soon as we detect success
                     console.log('Navigating away from download page to mymodel page...');
                     const currentUrl = this.page.url();
                     console.log('Current URL before navigation:', currentUrl);
@@ -2273,10 +2305,8 @@ class KiriEngineAutomation {
                         }
                     }
 
-                    // Logout and close browser after download is complete
-                    console.log('Download process completed - logging out and closing browser...');
-                    await this.logout();
-
+                    // After successful download, just close the browser (no logout)
+                    console.log('Download process completed - closing browser...');
                     await this.close();
 
                     return { success: true, message: '3D model export and download completed' };
@@ -2613,11 +2643,42 @@ class KiriEngineAutomation {
                                     projectCount: projectCards.length
                                 });
 
+                                const lowerStatus = statusText.toLowerCase();
+
                                 // Emit progress event when tracked project status is "Processing.."
-                                if (statusText.includes('Processing')) {
+                                if (lowerStatus.includes('processing')) {
                                     console.log('🚀 EMITTING PROCESSING PROGRESS EVENT FOR TRACKED PROJECT');
                                     global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
                                     console.log('🚀 PROCESSING PROGRESS EVENT EMITTED FOR TRACKED PROJECT');
+                                }
+
+                                // If tracked project status is Failed, emit error and stop monitoring/reload
+                                if (lowerStatus.includes('failed')) {
+                                    console.log('❌ TRACKED PROJECT FAILED, EMITTING ERROR EVENT AND STOPPING RELOAD');
+                                    global.io.emit('progress', {
+                                        step: 'error',
+                                        message: `Tracked project failed in Kiri Engine: ${statusText}`
+                                    });
+
+                                    // Stop the monitoring cycle inside automation
+                                    try {
+                                        this.stopPageReloadCycle();
+                                    } catch (e) {
+                                        console.log('Error stopping page reload cycle after failure:', e.message);
+                                    }
+
+                                    // Clear monitoring flags in the Kiri page
+                                    try {
+                                        await this.page.evaluate(() => {
+                                            localStorage.removeItem('kiri_monitoring_active');
+                                            localStorage.removeItem('kiri_scan_start_time');
+                                        });
+                                    } catch (e) {
+                                        console.log('Error clearing monitoring flags after failure:', e.message);
+                                    }
+
+                                    // Do not proceed to completion/export when failed
+                                    return;
                                 }
                             }
                         } else {

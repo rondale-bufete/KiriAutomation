@@ -231,6 +231,76 @@ class Scanner {
     }
 
     /**
+     * Central handler for scan failures / failed cards
+     */
+    async handleScanFailure(reason = 'Scanning failed. Please try again.') {
+        try {
+            console.log('❌ SCAN FAILURE HANDLER TRIGGERED:', reason);
+
+            // Update status UI
+            this.showStatus('error', reason);
+
+            // Ensure motor and turntable are stopped
+            try {
+                this.controlMotor('off');
+            } catch (e) {
+                console.warn('Error turning off motor during failure handler:', e);
+            }
+            try {
+                this.stopTurntableRotation();
+            } catch (e) {
+                console.warn('Error stopping turntable during failure handler:', e);
+            }
+
+            // Ask backend to close automation browser instance (if any)
+            try {
+                await fetch('/api/close-automation', { method: 'POST' });
+            } catch (e) {
+                console.warn('Error calling /api/close-automation:', e);
+            }
+
+            // Stop monitoring / reload cycle
+            try {
+                await this.stopMonitoring();
+            } catch (e) {
+                console.warn('Error stopping monitoring during failure handler:', e);
+            }
+
+            // Explicitly stop page reload cycle as extra safety
+            try {
+                this.stopPageReloadCycle();
+            } catch (e) {
+                console.warn('Error stopping page reload cycle during failure handler:', e);
+            }
+
+            // Reset pipeline UI
+            try {
+                this.resetPipeline();
+            } catch (e) {
+                console.warn('Error resetting pipeline during failure handler:', e);
+            }
+
+            // Clear form and uploads so user can start fresh
+            try {
+                await this.clearFormAndUploads();
+            } catch (e) {
+                console.warn('Error clearing form/uploads during failure handler:', e);
+            }
+
+            // Reset scanning state and buttons
+            this.isScanning = false;
+            if (this.startScanBtn) {
+                this.startScanBtn.disabled = false;
+                this.startScanBtn.innerHTML = '<i class="fas fa-camera"></i> Start Live Scanning';
+            }
+            this.updateMonitoringUI();
+
+        } catch (error) {
+            console.error('🚨 Error in handleScanFailure:', error);
+        }
+    }
+
+    /**
      * Trigger MacroDroid webhook to start macro on phone
      */
     async triggerMacroDroidWebhook() {
@@ -239,7 +309,7 @@ class Scanner {
             console.log('Triggering MacroDroid webhook...');
 
             // Base webhook URL
-            const baseUrl = 'https://trigger.macrodroid.com/23c404a9-1fd4-4ae7-acb7-9c7ba51da4ea/trigger-kiri-scan';
+            const baseUrl = 'https://trigger.macrodroid.com/1edc60c9-1abf-4a1f-b80f-61c0919ad820/trigger-macro';
 
             // Add parameters as query string (MacroDroid prefers GET with query parameters)
             const params = new URLSearchParams({
@@ -361,6 +431,26 @@ class Scanner {
     }
 
     /**
+     * Control ESP32 motor via Node.js Blynk API
+     * state: 'on' | 'off'
+     */
+    async controlMotor(state) {
+        const normalized = (state || 'off').toLowerCase() === 'on' ? 'on' : 'off';
+        const url = `/api/motor/control/${normalized}`;
+
+        try {
+            console.log(`⚙️ MOTOR: Sending ${normalized.toUpperCase()} command to`, url);
+            const response = await fetch(url, { method: 'POST' });
+            const result = await response.json().catch(() => ({}));
+            console.log('⚙️ MOTOR: Response:', result);
+            return result;
+        } catch (error) {
+            console.error('⚙️ MOTOR: Error sending command:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
      * Start turntable rotation based on current pipeline step
      */
     async startTurntableRotationForStep(stepIndex) {
@@ -465,6 +555,17 @@ class Scanner {
         } else {
             stepTitle.textContent = this.getPendingStepTitle(stepIndex);
             stepDescription.textContent = this.getPendingStepDescription(stepIndex);
+        }
+
+        // Handle motor control when transitioning to Processing Photogrammetry step
+        // This is needed when processing is detected locally (not via Socket.IO)
+        if (this.isScanning && stepIndex === 2 && status === 'active') {
+            console.log('🎠 TURNTABLE: Stopping rotation for Processing Photogrammetry step (local detection)...');
+            this.stopTurntableRotation();
+
+            // Turn OFF ESP32 motor when capturing phase ends
+            console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (local detection)...');
+            this.controlMotor('off');
         }
 
         console.log(`✅ Pipeline step ${stepIndex} (${step.name}) updated to: ${status}`);
@@ -860,50 +961,6 @@ class Scanner {
     }
 
     /**
-     * Update port status in the UI
-     */
-    updatePortStatus(data) {
-        if (this.monitoringStatus) {
-            const ports = data.ports || [];
-            if (ports.length > 0) {
-                const portList = ports.join(', ');
-                this.monitoringStatus.innerHTML = `<i class="fas fa-usb"></i> Arduino ports found: ${portList}`;
-                this.monitoringStatus.className = 'monitoring-status active';
-            } else {
-                this.monitoringStatus.innerHTML = `<i class="fas fa-exclamation-triangle"></i> No Arduino ports found`;
-                this.monitoringStatus.className = 'monitoring-status warning';
-            }
-        }
-    }
-
-    /**
-     * Update port connection status in the UI
-     */
-    updatePortConnectionStatus(data, isConnected) {
-        if (this.monitoringStatus) {
-            const portPath = data.port;
-            if (isConnected) {
-                this.monitoringStatus.innerHTML = `<i class="fas fa-plug"></i> Connected to Arduino on ${portPath}`;
-                this.monitoringStatus.className = 'monitoring-status success';
-            } else {
-                const reason = data.message ? `: ${data.message}` : '';
-                this.monitoringStatus.innerHTML = `<i class="fas fa-times-circle"></i> Disconnected from Arduino${reason}`;
-                this.monitoringStatus.className = 'monitoring-status error';
-            }
-        }
-    }
-
-    /**
-     * Handle incoming Arduino data
-     */
-    handleArduinoData(data) {
-        if (this.monitoringStatus) {
-            this.monitoringStatus.innerHTML = `<i class="fas fa-exchange-alt"></i> Last data from ${data.port}: ${data.data}`;
-            this.monitoringStatus.className = 'monitoring-status active';
-        }
-    }
-
-    /**
      * Start monitoring with Socket.IO connection
      */
     /**
@@ -928,32 +985,6 @@ class Scanner {
                 this.updateMonitoringStatus(data);
             });
 
-            // Listen for Arduino port updates
-            this.socket.on('arduino-ports-list', (data) => {
-                console.log('Received Arduino ports list:', data);
-                this.updatePortStatus(data);
-            });
-
-            this.socket.on('arduino-port-connected', (data) => {
-                console.log('Arduino connected:', data);
-                this.updatePortConnectionStatus(data, true);
-            });
-
-            this.socket.on('arduino-port-disconnected', (data) => {
-                console.log('Arduino disconnected:', data);
-                this.updatePortConnectionStatus(data, false);
-            });
-
-            this.socket.on('arduino-data', (data) => {
-                console.log('Received Arduino data:', data);
-                this.handleArduinoData(data);
-            });
-
-            this.socket.on('port-error', (data) => {
-                console.error('Arduino port error:', data);
-                this.showStatus('error', 'Arduino port error: ' + data.message);
-            });
-
             // Listen for remote scan triggers from CI4
             this.socket.on('remote-scan-trigger', (data) => {
                 console.log('🌐 SCANNING: Remote scan trigger received:', data);
@@ -966,13 +997,18 @@ class Scanner {
             });
 
             // Listen for progress events (same as upload pipeline)
-            this.socket.on('progress', (data) => {
+            this.socket.on('progress', async (data) => {
                 console.log('🎯 SCANNING PIPELINE: Received progress event:', data);
                 console.log('🎯 SCANNING PIPELINE: Socket connected:', this.socket.connected);
                 console.log('🎯 SCANNING PIPELINE: Current pipeline step before update:', this.currentPipelineStep);
-                console.log('🎯 SCANNING PIPELINE: Calling updateScanningProgress...');
-                this.updateScanningProgress(data.step, data.message);
-                console.log('🎯 SCANNING PIPELINE: Current pipeline step after update:', this.currentPipelineStep);
+                if (data.step === 'error') {
+                    console.log('🎯 SCANNING PIPELINE: Error step received, triggering failure handler');
+                    this.handleScanFailure(data.message || 'Scanning failed due to an error in automation.');
+                } else {
+                    console.log('🎯 SCANNING PIPELINE: Calling updateScanningProgress...');
+                    await this.updateScanningProgress(data.step, data.message);
+                    console.log('🎯 SCANNING PIPELINE: Current pipeline step after update:', this.currentPipelineStep);
+                }
             });
 
             console.log('🔌 Socket.IO connection initialized');
@@ -1028,6 +1064,9 @@ class Scanner {
 
                 // Stop turntable rotation when monitoring stops
                 this.stopTurntableRotation();
+
+                // Also stop any page reload interval associated with monitoring
+                this.stopPageReloadCycle();
 
                 // Close Socket.IO connection
                 if (this.socket) {
@@ -1295,7 +1334,7 @@ class Scanner {
     /**
      * Update scanning progress based on Socket.IO progress events (same as upload pipeline)
      */
-    updateScanningProgress(step, message) {
+    async updateScanningProgress(step, message) {
         console.log(`🔄 updateScanningProgress: step=${step}, message=${message}`);
         console.log(`🔄 updateScanningProgress: pipelineSteps length:`, this.pipelineSteps.length);
 
@@ -1330,19 +1369,29 @@ class Scanner {
                 stepElement.classList.remove('pending', 'completed');
                 stepElement.classList.add('active');
                 this.updateStepText(stepElement, i, 'active', message);
-                console.log(`🔄 Step ${i}: Updated to active with message: ${message}`);
+                console.log(`🔄 Step ${i}: Updated to active`);
 
-                // Handle turntable rotation for specific steps
-                if (i === 1 && step === 'upload') {
-                    // Start turntable rotation for "Capturing Artifact" step
-                    console.log('🎠 TURNTABLE: Starting rotation for Capturing Artifact step...');
-                    console.log('🎠 TURNTABLE: Step index:', i, 'Step:', step);
-                    this.startTurntableRotation();
-                } else if (i === 2 && step === 'processing') {
-                    // Stop turntable rotation when advancing to "Processing Photogrammetry"
-                    console.log('🎠 TURNTABLE: Stopping rotation for Processing Photogrammetry step...');
-                    console.log('🎠 TURNTABLE: Step index:', i, 'Step:', step);
-                    this.stopTurntableRotation();
+                // Handle specific step actions (turntable + motor) ONLY for live scanning
+                // Guarded by isScanning so Upload Existing Media Files progress
+                // does NOT trigger any motor or turntable actions.
+                if (this.isScanning) {
+                    if (i === 1 && step === 'upload') {
+                        // Start turntable rotation when entering "Capturing Artifact" step
+                        console.log('🎠 TURNTABLE: Starting rotation for Capturing Artifact step...');
+                        this.startTurntableRotation();
+
+                        // Turn ON ESP32 motor when capturing starts
+                        await this.controlMotor('on');
+                    } else if (i === 2 && step === 'processing') {
+                        // Stop turntable rotation when advancing to "Processing Photogrammetry"
+                        console.log('🎠 TURNTABLE: Stopping rotation for Processing Photogrammetry step...');
+                        this.stopTurntableRotation();
+
+                        // Turn OFF ESP32 motor when capturing phase ends
+                        console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (Socket.IO)...');
+                        await this.controlMotor('off');
+                        console.log('🔌 MOTOR: Motor turned OFF successfully');
+                    }
                 }
             } else {
                 // Future steps - mark as pending
@@ -1358,16 +1407,21 @@ class Scanner {
         // Update internal pipeline state
         this.currentPipelineStep = currentStep;
 
-        // Show success modal when complete
-        if (step === 'complete' || currentStep >= 4) {
-            console.log('All steps completed! Showing success modal...');
+        // When we reach the final step, show success modal and clear form/uploads
+        if (step === 'complete' || currentStep === this.pipelineSteps.length - 1) {
+            console.log('🎉 Scanning pipeline completed! Showing success modal...');
 
-            // Stop turntable rotation when process completes
+            // Stop monitoring and turntable when pipeline is done
+            this.stopMonitoring();
             this.stopTurntableRotation();
+
+            // Ensure motor is OFF when the entire pipeline completes (only relevant for live scanning)
+            if (this.isScanning) {
+                await this.controlMotor('off');
+            }
 
             setTimeout(() => {
                 this.showSuccessModal();
-                // Clear form and delete uploads after completion
                 this.clearFormAndUploads();
             }, 1000);
         }
@@ -1431,10 +1485,10 @@ class Scanner {
      */
     async clearFormAndUploads() {
         console.log('Clearing form and deleting uploads...');
-        
+
         // Clear the scan form
         this.clearScanForm();
-        
+
         // Delete uploads folder contents via API
         try {
             const response = await fetch('/api/clear-uploads', {
@@ -1443,7 +1497,7 @@ class Scanner {
                     'Content-Type': 'application/json'
                 }
             });
-            
+
             const result = await response.json();
             if (result.success) {
                 console.log('✅ Uploads folder cleared successfully');
@@ -1600,7 +1654,19 @@ class Scanner {
                 const statusMask = card.querySelector('.status-mask');
                 if (statusMask) {
                     isCompleted = false;
-                    break;
+
+                    // Detect failed cards by status text (check all cards, not just first)
+                    const statusSpan = statusMask.querySelector('.status span');
+                    if (statusSpan) {
+                        const statusText = statusSpan.textContent.trim();
+                        console.log('Card status text:', statusText);
+                        if (statusText.toLowerCase().includes('failed')) {
+                            console.log('❌ FAILED CARD DETECTED:', statusText);
+                            this.handleScanFailure('Scan failed in Kiri Engine (card marked Failed).');
+                            return;
+                        }
+                    }
+                    // Continue checking other cards for potential failures
                 }
             }
 

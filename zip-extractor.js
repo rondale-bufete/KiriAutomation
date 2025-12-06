@@ -94,12 +94,12 @@ class ZipExtractor {
                 try {
                     if (fs.existsSync(folderPath)) {
                         const stats = await fs.stat(folderPath);
-                        
+
                         // Check if it's a directory (new extracted folder)
                         if (stats.isDirectory() && !this.knownExtractedFolders.has(filename)) {
                             console.log('📦 New extracted folder detected:', filename);
                             this.knownExtractedFolders.add(filename);
-                            
+
                             // Check if folder has content (GLB files, etc.)
                             const folderContents = await fs.readdir(folderPath);
                             if (folderContents.length > 0) {
@@ -155,14 +155,14 @@ class ZipExtractor {
             // Check if global.io is available (Socket.IO instance)
             if (global.io) {
                 console.log('📦 Emitting extraction complete event for folder:', folderName);
-                global.io.emit('progress', { 
-                    step: 'complete', 
+                global.io.emit('progress', {
+                    step: 'complete',
                     message: '3D model download and extraction completed successfully!',
                     extractedFolder: folderName,
                     folderPath: folderPath
                 });
                 console.log('✅ Completion event emitted successfully');
-                
+
                 // Trigger logout after extraction is detected
                 this.triggerLogoutAfterExtraction();
             } else {
@@ -180,16 +180,16 @@ class ZipExtractor {
     async triggerLogoutAfterExtraction() {
         try {
             console.log('📦 Triggering logout after extraction detection...');
-            
+
             // Check if automation instance is available
             if (global.automation && global.automation.page) {
                 console.log('📦 Automation instance found, navigating to mymodel and logging out...');
-                
+
                 // Navigate to mymodel page first
                 try {
                     const currentUrl = global.automation.page.url();
                     console.log('📦 Current URL before navigation:', currentUrl);
-                    
+
                     // Navigate to mymodel page
                     await global.automation.page.goto('https://www.kiriengine.app/webapp/mymodel', {
                         waitUntil: 'networkidle2',
@@ -209,7 +209,7 @@ class ZipExtractor {
                         console.error('❌ Failed to navigate to mymodel page:', retryError.message);
                     }
                 }
-                
+
                 // Perform logout
                 try {
                     await global.automation.logout();
@@ -361,17 +361,17 @@ class ZipExtractor {
             // Look for screenshot files in the extracted root directory
             const screenshotFiles = await fs.readdir(this.extractedDir);
             const screenshotPattern = /^model_screenshot_\d+\.png$/i;
-            
+
             for (const file of screenshotFiles) {
                 if (screenshotPattern.test(file)) {
                     const screenshotPath = path.join(this.extractedDir, file);
                     const stats = await fs.stat(screenshotPath);
-                    
+
                     // Only move files (not directories) and check if it's a recent screenshot (within last 10 minutes)
                     if (stats.isFile()) {
                         const fileAge = Date.now() - stats.mtime.getTime();
                         const tenMinutes = 10 * 60 * 1000;
-                        
+
                         if (fileAge < tenMinutes) {
                             const destinationPath = path.join(extractFolder, file);
                             console.log(`📦 Moving screenshot to extracted folder: ${file} → ${path.basename(extractFolder)}`);
@@ -402,6 +402,8 @@ class ZipExtractor {
             }
 
             console.log('📦 Found GLB files for auto-upload:', glbFiles);
+
+            let autoUploadNotified = false;
 
             // Upload each GLB file
             for (const glbFile of glbFiles) {
@@ -455,12 +457,54 @@ class ZipExtractor {
 
                     if (uploadResult.success) {
                         console.log('✅ GLB file uploaded successfully:', glbFile);
+
+                        // On first successful upload in this batch, notify pipeline that auto-upload is done
+                        if (!autoUploadNotified && typeof global !== 'undefined' && global.io) {
+                            autoUploadNotified = true;
+                            try {
+                                global.io.emit('progress', {
+                                    step: 'auto-upload',
+                                    message: 'Auto-upload to CI4 completed; temp files created.'
+                                });
+                                global.io.emit('progress', {
+                                    step: 'complete',
+                                    message: 'Processing completed successfully!'
+                                });
+
+                                // After auto-upload and completion, close automation browser if available
+                                if (global.automation && typeof global.automation.close === 'function') {
+                                    console.log('📦 Closing automation browser after auto-upload completion...');
+                                    try {
+                                        await global.automation.close();
+                                        global.automation = null;
+                                        console.log('✅ Automation browser closed successfully after auto-upload');
+                                    } catch (closeErr) {
+                                        console.error('❌ Error closing automation browser after auto-upload:', closeErr.message);
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Error emitting auto-upload/complete progress events:', e.message);
+                            }
+                        }
                     } else {
                         console.error('❌ GLB file upload failed:', glbFile, uploadResult.error);
                     }
                 } catch (error) {
                     console.error('❌ Error uploading GLB file:', glbFile, error.message);
                 }
+            }
+
+            // After at least one successful auto-upload in this batch, delete the extracted folder
+            if (autoUploadNotified) {
+                try {
+                    console.log('📦 Auto-upload succeeded - deleting extracted folder to save storage:', extractFolder);
+                    await fs.remove(extractFolder);
+                    console.log('📦 Extracted folder deleted successfully:', extractFolder);
+                } catch (cleanupError) {
+                    console.error('❌ Error deleting extracted folder after auto-upload:', cleanupError.message);
+                }
+            } else {
+                console.log('📦 No successful auto-uploads; keeping extracted folder for debugging.');
             }
 
         } catch (error) {
