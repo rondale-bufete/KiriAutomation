@@ -635,14 +635,20 @@ app.get('/api/motor/status', async (req, res) => {
 });
 
 // API to control motor ON/OFF (state param like 'on' or 'off')
-app.post('/api/motor/control/:state', async (req, res) => {
+// Motor control endpoint - handles both GET and POST requests
+const motorControlHandler = async (req, res) => {
   try {
     const { state } = req.params;
     const normalized = String(state || 'off').toLowerCase() === 'on' ? 'on' : 'off';
 
+    console.log(`🔌 MOTOR API: Received motor control request (${req.method}) for state: ${state}, normalized to: ${normalized}`);
+
     const updateResult = await blynkUpdateMotor(normalized);
 
+    console.log(`🔌 MOTOR API: blynkUpdateMotor result:`, updateResult);
+
     if (!updateResult.success) {
+      console.error(`🔌 MOTOR API: Failed to send motor command`, updateResult);
       return res.status(500).json({
         success: false,
         message: 'Failed to send motor command',
@@ -650,6 +656,7 @@ app.post('/api/motor/control/:state', async (req, res) => {
       });
     }
 
+    console.log(`🔌 MOTOR API: Motor command sent successfully: ${normalized.toUpperCase()}`);
     res.json({
       success: true,
       message: `Motor command sent: ${normalized.toUpperCase()}`,
@@ -657,10 +664,14 @@ app.post('/api/motor/control/:state', async (req, res) => {
       response: updateResult.response || null
     });
   } catch (error) {
-    console.error('Motor control API error:', error.message);
+    console.error('🔌 MOTOR API: Motor control API error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
+
+// Accept both GET and POST requests for motor control
+app.get('/api/motor/control/:state', motorControlHandler);
+app.post('/api/motor/control/:state', motorControlHandler);
 
 // CI4 Remote Upload Endpoint - Saves files to uploads directory
 // File watcher will automatically detect and process them
@@ -838,6 +849,9 @@ async function blynkUpdateMotor(state = 'off') {
   const value = String(state).toLowerCase() === 'on' ? 1 : 0;
   const url = `https://${BLYNK_CONFIG.server}/external/api/update?token=${BLYNK_CONFIG.token}&V1=${value}`;
 
+  console.log(`🔌 MOTOR: blynkUpdateMotor called with state=${state}, value=${value}`);
+  console.log(`🔌 MOTOR: Sending Blynk API request to: https://${BLYNK_CONFIG.server}/external/api/update?token=[HIDDEN]&V1=${value}`);
+
   try {
     let response;
     if (typeof fetch !== 'undefined') {
@@ -847,16 +861,19 @@ async function blynkUpdateMotor(state = 'off') {
       response = await nodeFetch(url, { method: 'GET' });
     }
 
+    console.log(`🔌 MOTOR: Blynk API response status: ${response.status}`);
+
     if (!response.ok) {
       const text = await response.text();
-      console.error('Blynk update HTTP error:', response.status, text);
+      console.error('🔌 MOTOR: Blynk update HTTP error:', response.status, text);
       return { success: false, httpCode: response.status, response: text };
     }
 
     const text = await response.text();
+    console.log(`🔌 MOTOR: Blynk API success! Response: ${text}`);
     return { success: true, httpCode: response.status, response: text };
   } catch (error) {
-    console.error('Blynk update error:', error.message);
+    console.error('🔌 MOTOR: Blynk update error:', error.message);
     return { success: false, error: error.message };
   }
 }
