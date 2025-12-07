@@ -511,10 +511,7 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     // Emit progress update
     broadcastProgress('processing', 'Processing photogrammetry with multiple images...');
 
-    // Turn OFF motor when processing starts
-    console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (server-side)...');
     await blynkUpdateMotor('off');
-    console.log('🔌 MOTOR: Motor turned OFF successfully (server-side)');
 
     // Wait for project completion and handle export/download
     const exportResult = await automation.waitForProjectCompletionAndExport();
@@ -641,14 +638,11 @@ const motorControlHandler = async (req, res) => {
     const { state } = req.params;
     const normalized = String(state || 'off').toLowerCase() === 'on' ? 'on' : 'off';
 
-    console.log(`🔌 MOTOR API: Received motor control request (${req.method}) for state: ${state}, normalized to: ${normalized}`);
 
     const updateResult = await blynkUpdateMotor(normalized);
 
-    console.log(`🔌 MOTOR API: blynkUpdateMotor result:`, updateResult);
 
     if (!updateResult.success) {
-      console.error(`🔌 MOTOR API: Failed to send motor command`, updateResult);
       return res.status(500).json({
         success: false,
         message: 'Failed to send motor command',
@@ -656,7 +650,6 @@ const motorControlHandler = async (req, res) => {
       });
     }
 
-    console.log(`🔌 MOTOR API: Motor command sent successfully: ${normalized.toUpperCase()}`);
     res.json({
       success: true,
       message: `Motor command sent: ${normalized.toUpperCase()}`,
@@ -664,7 +657,6 @@ const motorControlHandler = async (req, res) => {
       response: updateResult.response || null
     });
   } catch (error) {
-    console.error('🔌 MOTOR API: Motor control API error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -849,8 +841,6 @@ async function blynkUpdateMotor(state = 'off') {
   const value = String(state).toLowerCase() === 'on' ? 1 : 0;
   const url = `https://${BLYNK_CONFIG.server}/external/api/update?token=${BLYNK_CONFIG.token}&V1=${value}`;
 
-  console.log(`🔌 MOTOR: blynkUpdateMotor called with state=${state}, value=${value}`);
-  console.log(`🔌 MOTOR: Sending Blynk API request to: https://${BLYNK_CONFIG.server}/external/api/update?token=[HIDDEN]&V1=${value}`);
 
   try {
     let response;
@@ -861,19 +851,15 @@ async function blynkUpdateMotor(state = 'off') {
       response = await nodeFetch(url, { method: 'GET' });
     }
 
-    console.log(`🔌 MOTOR: Blynk API response status: ${response.status}`);
 
     if (!response.ok) {
       const text = await response.text();
-      console.error('🔌 MOTOR: Blynk update HTTP error:', response.status, text);
       return { success: false, httpCode: response.status, response: text };
     }
 
     const text = await response.text();
-    console.log(`🔌 MOTOR: Blynk API success! Response: ${text}`);
     return { success: true, httpCode: response.status, response: text };
   } catch (error) {
-    console.error('🔌 MOTOR: Blynk update error:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -991,6 +977,85 @@ function broadcastProgress(step, message) {
   sendCI4ProgressUpdate(step, message).catch(err => {
     console.error('Error sending CI4 progress update:', err.message);
   });
+
+  // Update pipeline state
+  updatePipelineState(step, message);
+}
+
+// === Pipeline Status Management ===
+
+// Pipeline definitions
+const SCAN_PIPELINE = {
+  name: 'Scan New Artifact',
+  steps: [
+    { id: 'scanStep1', index: 0, name: 'Authenticate', description: 'Login to Kiri Engine' },
+    { id: 'scanStep2', index: 1, name: 'Capturing Artifact', description: 'Taking photos from multiple angles' },
+    { id: 'scanStep3', index: 2, name: 'Processing Photogrammetry', description: 'Creating 3D model from photos' },
+    { id: 'scanStep4', index: 3, name: 'Downloading 3D', description: 'Getting your 3D model' }
+  ]
+};
+
+const UPLOAD_PIPELINE = {
+  name: 'Upload Existing Media',
+  steps: [
+    { id: 'step1', index: 0, name: 'Authenticate', description: 'Login to Kiri Engine' },
+    { id: 'step2', index: 1, name: 'Upload Files', description: 'Transfer your media files' },
+    { id: 'step3', index: 2, name: 'Process Photogrammetry', description: 'Photo Scan with Kiri Engine' },
+    { id: 'step4', index: 3, name: 'Download', description: 'Get your 3D model' },
+    { id: 'step5', index: 4, name: 'Auto-Upload', description: 'Upload to VPS system' }
+  ]
+};
+
+// Progress event to step mapping
+const PROGRESS_STEP_MAP = {
+  'login': 0,      // Authenticate
+  'upload': 1,     // Upload/Capturing
+  'processing': 2, // Processing
+  'download': 3,   // Downloading
+  'complete': -1   // Completed (pseudo-step)
+};
+
+// Global pipeline state
+const pipelineState = {
+  scan: {
+    isActive: false,
+    currentStep: -1,
+    currentStatus: 'pending',
+    lastUpdated: null
+  },
+  upload: {
+    isActive: false,
+    currentStep: -1,
+    currentStatus: 'pending',
+    lastUpdated: null
+  }
+};
+
+// Function to update pipeline state
+function updatePipelineState(step, message) {
+  try {
+    const stepIndex = PROGRESS_STEP_MAP[step];
+
+    // Determine which pipeline is active based on context
+    // For now, we'll check message content to determine pipeline type
+    const isScanPipeline = message && (message.includes('turntable') || message.includes('photos'));
+    const pipeline = isScanPipeline ? 'scan' : 'upload';
+
+    if (stepIndex !== undefined) {
+      if (stepIndex === -1) {
+        // Complete
+        pipelineState[pipeline].currentStatus = 'completed';
+      } else {
+        pipelineState[pipeline].isActive = true;
+        pipelineState[pipeline].currentStep = stepIndex;
+        pipelineState[pipeline].currentStatus = 'active';
+        pipelineState[pipeline].lastUpdated = new Date().toISOString();
+        console.log(`📊 Pipeline State Updated: ${pipeline.toUpperCase()} - Step ${stepIndex} (${SCAN_PIPELINE.steps[stepIndex]?.name || UPLOAD_PIPELINE.steps[stepIndex]?.name})`);
+      }
+    }
+  } catch (error) {
+    console.error('Error updating pipeline state:', error.message);
+  }
 }
 
 // Simple test endpoint to verify server is running new code
@@ -2127,6 +2192,15 @@ class CI4UploadWatcher {
     isProcessing = true;
 
     try {
+      // Reset upload pipeline state at start of new upload
+      pipelineState.upload = {
+        isActive: false,
+        currentStep: -1,
+        currentStatus: 'pending',
+        lastUpdated: null
+      };
+      console.log('📊 Pipeline State Reset: UPLOAD pipeline reset for new upload');
+
       // Always create a fresh automation instance for each request
       if (automation) {
         console.log('Closing previous automation instance...');
@@ -2191,10 +2265,7 @@ class CI4UploadWatcher {
       // Emit progress update
       io.emit('progress', { step: 'processing', message: 'Processing photogrammetry with multiple images...' });
 
-      // Turn OFF motor when processing starts
-      console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (CI4 upload, server-side)...');
       await blynkUpdateMotor('off');
-      console.log('🔌 MOTOR: Motor turned OFF successfully (CI4 upload, server-side)');
 
       // Wait for project completion and handle export/download
       const exportResult = await automation.waitForProjectCompletionAndExport();
@@ -2238,6 +2309,15 @@ class CI4UploadWatcher {
         console.log('Error closing automation:', e.message);
       }
 
+      // Reset pipeline state after successful completion
+      pipelineState.upload = {
+        isActive: false,
+        currentStep: -1,
+        currentStatus: 'pending',
+        lastUpdated: null
+      };
+      console.log('📊 Pipeline State Reset: UPLOAD pipeline reset after successful completion');
+
       isProcessing = false;
       io.emit('progress', { step: 'complete', message: 'Processing completed successfully!' });
       console.log('✅ CI4 Upload Process Completed Successfully!');
@@ -2245,9 +2325,17 @@ class CI4UploadWatcher {
     } catch (error) {
       isProcessing = false;
 
+      // Reset pipeline state on error
+      pipelineState.upload = {
+        isActive: false,
+        currentStep: -1,
+        currentStatus: 'pending',
+        lastUpdated: null
+      };
+      console.log('📊 Pipeline State Reset: UPLOAD pipeline reset due to error');
+
       // Clean up automation instance on error
       if (automation) {
-        console.log('Closing automation instance due to error...');
         try {
           await automation.close();
           automation = null;
@@ -2261,7 +2349,6 @@ class CI4UploadWatcher {
       files.forEach(file => this.processingFiles.delete(file));
 
       io.emit('progress', { step: 'error', message: `Error: ${error.message}` });
-      console.error('❌ CI4 Upload Processing Error:', error);
     }
   }
 
@@ -2294,82 +2381,132 @@ app.post('/api/remote/start-automated-scanning', async (req, res) => {
 
     console.log('🌐 CI4 Remote: Start Automated Scanning request received');
 
-    // Emit Socket.IO event to trigger the scanner on connected clients
-    if (global.io) {
-      global.io.emit('remote-scan-trigger', {
-        message: 'Remote automated scan triggered from CI4',
-        timestamp: new Date().toISOString(),
-        source: 'ci4-api'
-      });
-      console.log('✅ Remote scan trigger event emitted to connected clients');
-    }
+    // Send immediate response to CI4 app (don't wait for automation to complete)
+    res.json({
+      success: true,
+      message: 'Automated scanning started successfully',
+      timestamp: new Date().toISOString(),
+      status: 'scanning-in-progress'
+    });
 
-    // Also trigger the automation directly on the server side
-    try {
-      // Close existing automation if it exists
-      if (automation) {
-        console.log('Closing existing automation instance...');
-        try {
-          await automation.close();
-        } catch (e) {
-          console.log('Error closing existing automation:', e.message);
+    // Run server-side automation in background (don't await - respond immediately)
+    (async () => {
+      try {
+        // Reset scan pipeline state at start of new scan
+        pipelineState.scan = {
+          isActive: false,
+          currentStep: -1,
+          currentStatus: 'pending',
+          lastUpdated: null
+        };
+        console.log('📊 Pipeline State Reset: SCAN pipeline reset for new scan');
+
+        // Close existing automation if it exists
+        if (automation) {
+          console.log('Closing existing automation instance...');
+          try {
+            await automation.close();
+          } catch (e) {
+            console.log('Error closing existing automation:', e.message);
+          }
+          automation = null;
         }
-        automation = null;
+
+        // Create new automation instance
+        console.log('Creating new automation instance for remote scan...');
+        automation = new KiriEngineAutomation({
+          headless: config.NODE_ENV === 'production',
+          sessionPath: './session',
+          browserType: config.BROWSER_TYPE || 'chromium',
+          executablePath: config.BROWSER_EXECUTABLE_PATH || null
+        });
+
+        await automation.init();
+        global.automation = automation;
+
+        // Broadcast progress to any connected clients (optional)
+        broadcastProgress('login', 'Logging in to Kiri Engine...');
+
+        // Login to Kiri Engine
+        if (!config.KIRI_EMAIL || !config.KIRI_PASSWORD) {
+          throw new Error('Kiri Engine credentials not found in configuration');
+        }
+
+        const loginResult = await automation.login(config.KIRI_EMAIL, config.KIRI_PASSWORD);
+        if (!loginResult.success) {
+          throw new Error(loginResult.message);
+        }
+
+        console.log('✅ Kiri Engine login successful via remote trigger');
+
+        // Broadcast progress for capturing step to any connected clients
+        broadcastProgress('upload', 'Capturing photos with turntable rotation...');
+        try {
+          await blynkUpdateMotor('on');
+        } catch (motorError) {
+          console.error('🔌 MOTOR: Error turning on motor (server-side):', motorError.message);
+        }
+
+        // Trigger webhook macro to start photo capture (CRITICAL - must happen after motor ON)
+        console.log('📱 WEBHOOK: Triggering macro for photo capture...');
+        try {
+          // Use the macro trigger webhook that's configured in config.js
+          const webhookUrl = config.WEBHOOK_URL || 'http://localhost:3003/trigger-macro';
+          console.log('📱 WEBHOOK: Sending request to:', webhookUrl);
+
+          const webhookResponse = await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(
+            webhookUrl,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+          );
+
+          const webhookResult = await webhookResponse.json().catch(() => ({}));
+          console.log('📱 WEBHOOK: Response:', webhookResult);
+        } catch (webhookError) {
+          console.error('📱 WEBHOOK: Error triggering macro:', webhookError.message);
+        }
+
+        // Emit Socket.IO event to trigger the scanner on connected clients (for monitoring)
+        if (global.io) {
+          global.io.emit('remote-scan-trigger', {
+            message: 'Remote automated scan triggered from CI4',
+            timestamp: new Date().toISOString(),
+            source: 'ci4-api'
+          });
+          console.log('✅ Remote scan trigger event emitted to connected clients (for browser monitoring)');
+        }
+
+        // Start the page reload cycle for monitoring
+        console.log('Starting page reload cycle after successful login...');
+        automation.startPageReloadCycle();
+
+        console.log('✅ Server-side automation is now running (browser optional for monitoring)');
+
+      } catch (automationError) {
+        console.error('❌ Error in server-side automation trigger:', automationError);
+
+        // Reset pipeline state on error
+        pipelineState.scan = {
+          isActive: false,
+          currentStep: -1,
+          currentStatus: 'pending',
+          lastUpdated: null
+        };
+        console.log('📊 Pipeline State Reset: SCAN pipeline reset due to error');
+
+        // Broadcast error to any connected clients
+        broadcastProgress('error', `Automation error: ${automationError.message}`);
+
+        // Clean up on error
+        if (automation) {
+          try {
+            await automation.close();
+          } catch (e) {
+            console.log('Error closing automation after error:', e.message);
+          }
+          automation = null;
+        }
       }
-
-      // Create new automation instance
-      console.log('Creating new automation instance for remote scan...');
-      automation = new KiriEngineAutomation({
-        headless: config.NODE_ENV === 'production',
-        sessionPath: './session',
-        browserType: config.BROWSER_TYPE || 'chromium',
-        executablePath: config.BROWSER_EXECUTABLE_PATH || null
-      });
-
-      await automation.init();
-      global.automation = automation;
-
-      // Broadcast progress
-      broadcastProgress('login', 'Logging in to Kiri Engine...');
-
-      // Login to Kiri Engine
-      if (!config.KIRI_EMAIL || !config.KIRI_PASSWORD) {
-        throw new Error('Kiri Engine credentials not found in configuration');
-      }
-
-      const loginResult = await automation.login(config.KIRI_EMAIL, config.KIRI_PASSWORD);
-      if (!loginResult.success) {
-        throw new Error(loginResult.message);
-      }
-
-      console.log('✅ Kiri Engine login successful via remote trigger');
-
-      // Broadcast progress for capturing step
-      broadcastProgress('upload', 'Capturing photos with turntable rotation...');
-
-      // Start the page reload cycle for monitoring
-      console.log('Starting page reload cycle after successful login...');
-      automation.startPageReloadCycle();
-
-      res.json({
-        success: true,
-        message: 'Automated scanning started successfully from remote trigger',
-        timestamp: new Date().toISOString(),
-        status: 'scanning-in-progress'
-      });
-
-    } catch (automationError) {
-      console.error('❌ Error in server-side automation trigger:', automationError);
-
-      // Even if server-side automation fails, client-side might still work
-      res.json({
-        success: true,
-        message: 'Remote scan trigger sent to clients (server-side automation had issues)',
-        clientTrigger: true,
-        serverTrigger: false,
-        error: automationError.message
-      });
-    }
+    })();
 
   } catch (error) {
     console.error('❌ Error handling remote scan trigger:', error);
@@ -2463,6 +2600,190 @@ app.post('/api/remote/stop-scanning', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// === Pipeline Status API Endpoints ===
+
+/**
+ * POST /api/update-pipeline-state
+ * Receives pipeline state updates from the frontend
+ * Updates the global pipelineState object
+ */
+app.post('/api/update-pipeline-state', (req, res) => {
+  try {
+    const { pipeline, stepIndex, stepName, status, message } = req.body;
+
+    console.log(`📩 Received pipeline update:`, { pipeline, stepIndex, stepName, status, message });
+
+    if (!pipeline || stepIndex === undefined) {
+      return res.status(400).json({ success: false, error: 'Missing pipeline or stepIndex' });
+    }
+
+    // Update the appropriate pipeline state
+    if (pipeline === 'scan' && pipelineState.scan) {
+      pipelineState.scan.currentStep = stepIndex;
+      pipelineState.scan.currentStatus = status;
+      pipelineState.scan.lastUpdated = new Date().toISOString();
+      pipelineState.scan.isActive = stepIndex >= 0 && status === 'active';
+
+      console.log(`📊 ✅ Pipeline State Updated (Frontend): SCAN`);
+      console.log(`   Step: ${stepIndex}, Name: ${stepName}, Status: ${status}`);
+      console.log(`   Current pipelineState.scan:`, pipelineState.scan);
+    } else if (pipeline === 'upload' && pipelineState.upload) {
+      pipelineState.upload.currentStep = stepIndex;
+      pipelineState.upload.currentStatus = status;
+      pipelineState.upload.lastUpdated = new Date().toISOString();
+      pipelineState.upload.isActive = stepIndex >= 0 && status === 'active';
+
+      console.log(`📊 ✅ Pipeline State Updated (Frontend): UPLOAD`);
+      console.log(`   Step: ${stepIndex}, Name: ${stepName}, Status: ${status}`);
+      console.log(`   Current pipelineState.upload:`, pipelineState.upload);
+    }
+
+    res.json({ success: true, message: 'Pipeline state updated', state: pipelineState });
+  } catch (error) {
+    console.error('Error updating pipeline state:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/pipeline/debug
+ * Debug endpoint to see current pipeline state (no processing)
+ */
+app.get('/api/pipeline/debug', (req, res) => {
+  console.log('📋 Pipeline debug request - current state:', pipelineState);
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    debug: {
+      pipelineState: pipelineState,
+      scanPipelineDefinition: SCAN_PIPELINE,
+      uploadPipelineDefinition: UPLOAD_PIPELINE
+    }
+  });
+});
+
+/**
+ * GET /api/pipeline/status
+ * Returns both pipeline states with detailed information
+ */
+app.get('/api/pipeline/status', (req, res) => {
+  const scanState = pipelineState.scan;
+  const uploadState = pipelineState.upload;
+
+  const scanProgressPercent = scanState.isActive && scanState.currentStep >= 0 ? ((scanState.currentStep + 1) / SCAN_PIPELINE.steps.length) * 100 : 0;
+  const uploadProgressPercent = uploadState.isActive && uploadState.currentStep >= 0 ? ((uploadState.currentStep + 1) / UPLOAD_PIPELINE.steps.length) * 100 : 0;
+
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    scan: {
+      isRunning: scanState.isActive && scanState.currentStep >= 0,
+      currentStep: scanState.currentStep,
+      currentStepName: scanState.currentStep >= 0 ? SCAN_PIPELINE.steps[scanState.currentStep].name : 'Not started',
+      currentStatus: scanState.currentStatus,
+      progressPercent: Math.round(scanProgressPercent),
+      lastUpdated: scanState.lastUpdated
+    },
+    upload: {
+      isRunning: uploadState.isActive && uploadState.currentStep >= 0,
+      currentStep: uploadState.currentStep,
+      currentStepName: uploadState.currentStep >= 0 ? UPLOAD_PIPELINE.steps[uploadState.currentStep].name : 'Not started',
+      currentStatus: uploadState.currentStatus,
+      progressPercent: Math.round(uploadProgressPercent),
+      lastUpdated: uploadState.lastUpdated
+    }
+  });
+});
+
+/**
+ * GET /api/pipeline/active-status
+ * Returns simplified active status from both pipelines
+ * Includes activeStatus with values like: authenticating, capturing, processing, downloading
+ */
+app.get('/api/pipeline/active-status', (req, res) => {
+  const scanState = pipelineState.scan;
+  const uploadState = pipelineState.upload;
+
+  // Map pipeline step indices to human-readable active statuses
+  const scanStatusMap = {
+    0: 'authenticating',
+    1: 'capturing',
+    2: 'processing',
+    3: 'downloading'
+  };
+
+  const uploadStatusMap = {
+    0: 'authenticating',
+    1: 'uploading',
+    2: 'processing',
+    3: 'downloading',
+    4: 'uploading'
+  };
+
+  // Get active status for scan pipeline
+  let scanActiveStatus = null;
+  if (scanState.isActive && scanState.currentStep >= 0 && scanState.currentStep < 4) {
+    scanActiveStatus = scanStatusMap[scanState.currentStep];
+  }
+
+  // Get active status for upload pipeline
+  let uploadActiveStatus = null;
+  if (uploadState.isActive && uploadState.currentStep >= 0 && uploadState.currentStep < 5) {
+    uploadActiveStatus = uploadStatusMap[uploadState.currentStep];
+  }
+
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    activeStatus: {
+      scan: {
+        isRunning: scanState.isActive && scanState.currentStep >= 0,
+        status: scanActiveStatus, // 'authenticating', 'capturing', 'processing', 'downloading', or null
+        stepName: scanState.currentStep >= 0 ? SCAN_PIPELINE.steps[scanState.currentStep]?.name : null,
+        stepIndex: scanState.currentStep
+      },
+      upload: {
+        isRunning: uploadState.isActive && uploadState.currentStep >= 0,
+        status: uploadActiveStatus, // 'authenticating', 'uploading', 'processing', 'downloading', or null
+        stepName: uploadState.currentStep >= 0 ? UPLOAD_PIPELINE.steps[uploadState.currentStep]?.name : null,
+        stepIndex: uploadState.currentStep
+      }
+    }
+  });
+});
+
+/**
+ * POST /api/pipeline/reset
+ * Reset pipeline state to initial pending status
+ */
+app.post('/api/pipeline/reset', (req, res) => {
+  const { type } = req.body; // 'scan', 'upload', or 'both'
+
+  if (type === 'scan' || type === 'both') {
+    pipelineState.scan = {
+      isActive: false,
+      currentStep: -1,
+      currentStatus: 'pending',
+      lastUpdated: null
+    };
+  }
+
+  if (type === 'upload' || type === 'both') {
+    pipelineState.upload = {
+      isActive: false,
+      currentStep: -1,
+      currentStatus: 'pending',
+      lastUpdated: null
+    };
+  }
+
+  res.json({
+    success: true,
+    message: `Pipeline${type === 'both' ? 's' : ''} reset successfully`,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Initialize CI4 Upload Watcher

@@ -10,7 +10,7 @@ module.exports = {
     // ===========================================
     PORT: 3002,
     // NODE_ENV: 'development', // Development kung gusto naka open chrome ng automation
-    NODE_ENV: 'development', // Production kung gusto naka close chrome ng automation
+    NODE_ENV: 'production', // Production kung gusto naka close chrome ng automation
 
     // ===========================================
     // BROWSER CONFIGURATION

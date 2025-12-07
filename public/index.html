@@ -671,6 +671,35 @@
             const progressPercent = (currentStep / 5) * 100;
             progressFill.style.width = progressPercent + '%';
             
+            // Send pipeline update to server for /api/pipeline/active-status endpoint
+            const stepName = steps[currentStep];
+            const stepTexts = {
+                0: 'Authenticate',
+                1: 'Upload Files',
+                2: 'Process Photogrammetry',
+                3: 'Download',
+                4: 'Auto-Upload'
+            };
+            
+            try {
+                console.log(`📤 Sending upload pipeline update: step=${currentStep}, status=${currentStep < 5 ? 'active' : 'completed'}`);
+                const updateResponse = fetch('/api/update-pipeline-state', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        pipeline: 'upload',
+                        stepIndex: currentStep,
+                        stepName: stepTexts[currentStep] || 'Unknown',
+                        status: currentStep < 5 ? 'active' : 'completed',
+                        message: message
+                    })
+                });
+                const updateResult = updateResponse.json();
+                console.log(`✅ Upload pipeline update response:`, updateResult);
+            } catch (e) {
+                console.error('Error sending upload pipeline update to server:', e);
+            }
+            
             // Show success modal when all steps are completed
             if (step === 'complete' || currentStep >= 5) {
                 console.log('All steps completed! Showing success modal...');
@@ -1131,6 +1160,77 @@
                 showStatus('error', 'Error opening folder: ' + error.message);
             }
         }
+
+        // ===== PIPELINE STATUS POLLING (DEBUG) =====
+        // Auto-fetch and display pipeline status every 1 second for debugging
+        
+        // Create debug panel
+        const debugPanel = document.createElement('div');
+        debugPanel.id = 'pipelineDebugPanel';
+        debugPanel.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            background: rgba(0, 0, 0, 0.95);
+            color: #0f0;
+            border: 2px solid #0f0;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 10000;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        `;
+        debugPanel.innerHTML = `
+            <div style="color: #0f0; font-weight: bold; margin-bottom: 8px;">
+                📊 Pipeline Status (Live)
+                <button onclick="document.getElementById('pipelineDebugPanel').style.display='none'" style="float:right; background:none; border:none; color:#0f0; cursor:pointer; font-weight:bold;">×</button>
+            </div>
+            <div id="pipelineDebugContent" style="line-height: 1.6;">Loading...</div>
+        `;
+        document.body.appendChild(debugPanel);
+        
+        let pipelinePollingInterval = null;
+        
+        async function pollPipelineStatus() {
+            try {
+                const response = await fetch('/api/pipeline/active-status');
+                const data = await response.json();
+                
+                const content = document.getElementById('pipelineDebugContent');
+                if (content) {
+                    content.innerHTML = `
+<span style="color: #888;">${new Date().toLocaleTimeString()}</span>
+
+<span style="color: #0f0;">SCAN Pipeline:</span>
+  Status: <span style="color: ${data.activeStatus.scan.isRunning ? '#0f0' : '#888'}">${data.activeStatus.scan.isRunning ? '🟢 ACTIVE' : '⚫ INACTIVE'}</span>
+  Step: ${data.activeStatus.scan.stepIndex >= 0 ? data.activeStatus.scan.stepIndex : '-'}
+  Name: ${data.activeStatus.scan.stepName || 'None'}
+  Active: <span style="color: #0f0;">${data.activeStatus.scan.status || 'null'}</span>
+
+<span style="color: #0f0;">UPLOAD Pipeline:</span>
+  Status: <span style="color: ${data.activeStatus.upload.isRunning ? '#0f0' : '#888'}">${data.activeStatus.upload.isRunning ? '🟢 ACTIVE' : '⚫ INACTIVE'}</span>
+  Step: ${data.activeStatus.upload.stepIndex >= 0 ? data.activeStatus.upload.stepIndex : '-'}
+  Name: ${data.activeStatus.upload.stepName || 'None'}
+  Active: <span style="color: #0f0;">${data.activeStatus.upload.status || 'null'}</span>
+                    `;
+                }
+            } catch (error) {
+                const content = document.getElementById('pipelineDebugContent');
+                if (content) {
+                    content.innerHTML = `<span style="color: #f00;">Error: ${error.message}</span>`;
+                }
+            }
+        }
+        
+        // Start polling every 500ms for real-time updates
+        pipelinePollingInterval = setInterval(pollPipelineStatus, 500);
+        
+        // Initial poll
+        pollPipelineStatus();
 
         // Initialize
         checkStatus();

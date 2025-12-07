@@ -490,6 +490,7 @@ class Scanner {
                 return { success: true, message: 'No rotation needed for this step' };
             }
 
+
             console.log(`Starting turntable rotation for ${duration} seconds...`);
 
             // Temporarily set the rotation duration for this step
@@ -569,18 +570,33 @@ class Scanner {
             stepDescription.textContent = this.getPendingStepDescription(stepIndex);
         }
 
+        // Send pipeline update to server for /api/pipeline/active-status endpoint
+        try {
+            console.log(`📤 Sending pipeline update to server: pipeline=${pipeline}, step=${stepIndex}, status=${status}`);
+            const updateResponse = await fetch('/api/update-pipeline-state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pipeline: 'scan',
+                    stepIndex: stepIndex,
+                    stepName: step.name,
+                    status: status,
+                    message: message
+                })
+            });
+            const updateResult = await updateResponse.json();
+            console.log(`✅ Server response:`, updateResult);
+        } catch (e) {
+            console.error('Error sending pipeline update to server:', e);
+        }
+
         // Handle motor control when transitioning to Processing Photogrammetry step
         // This is needed when processing is detected locally (not via Socket.IO)
         if (this.isScanning && stepIndex === 2 && status === 'active') {
             console.log('🎠 TURNTABLE: Stopping rotation for Processing Photogrammetry step (local detection)...');
             this.stopTurntableRotation();
-
-            // Turn OFF ESP32 motor when capturing phase ends
-            console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step (local detection)...');
-            console.log('🔌 MOTOR: isScanning =', this.isScanning, ', stepIndex =', stepIndex, ', status =', status);
             try {
                 const motorOffResult = await this.controlMotor('off');
-                console.log('🔌 MOTOR: Motor turned OFF successfully. Response:', motorOffResult);
             } catch (e) {
                 console.error('🔌 MOTOR: ERROR turning off motor:', e);
             }
@@ -589,11 +605,9 @@ class Scanner {
         // Handle motor control when transitioning to Capturing Artifact step
         // Start the motor when we're ready to capture
         if (this.isScanning && stepIndex === 1 && status === 'active') {
-            console.log('🔌 MOTOR: Turning ON motor for Capturing Artifact step (local detection)...');
             console.log('🔌 MOTOR: isScanning =', this.isScanning, ', stepIndex =', stepIndex, ', status =', status);
             try {
                 const motorOnResult = await this.controlMotor('on');
-                console.log('🔌 MOTOR: Motor turned ON successfully. Response:', motorOnResult);
             } catch (e) {
                 console.error('🔌 MOTOR: ERROR turning on motor:', e);
             }
@@ -1410,9 +1424,6 @@ class Scanner {
                         // Start turntable rotation when entering "Capturing Artifact" step
                         console.log('🎠 TURNTABLE: Starting rotation for Capturing Artifact step...');
                         this.startTurntableRotation();
-
-                        // Turn ON ESP32 motor when capturing starts
-                        console.log('🔌 MOTOR: Turning ON motor via updateScanningProgress for Capturing Artifact step...');
                         try {
                             const motorOnResult = await this.controlMotor('on');
                             console.log('🔌 MOTOR: Motor turned ON successfully. Response:', motorOnResult);
@@ -1423,13 +1434,8 @@ class Scanner {
                         // Stop turntable rotation when advancing to "Processing Photogrammetry"
                         console.log('🎠 TURNTABLE: Stopping rotation for Processing Photogrammetry step...');
                         this.stopTurntableRotation();
-
-                        // Turn OFF ESP32 motor when capturing phase ends
-                        console.log('🔌 MOTOR: Turning OFF motor via updateScanningProgress for Processing Photogrammetry step...');
-                        console.log('🔌 MOTOR: isScanning =', this.isScanning, ', i =', i, ', step =', step);
                         try {
                             const motorOffResult = await this.controlMotor('off');
-                            console.log('🔌 MOTOR: Motor turned OFF successfully. Response:', motorOffResult);
                         } catch (e) {
                             console.error('🔌 MOTOR: ERROR turning off motor via updateScanningProgress:', e);
                         }

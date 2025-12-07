@@ -2649,13 +2649,11 @@ class KiriEngineAutomation {
                                 if (lowerStatus.includes('processing')) {
                                     console.log('🚀 EMITTING PROCESSING PROGRESS EVENT FOR TRACKED PROJECT');
                                     global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
-                                    console.log('🚀 PROCESSING PROGRESS EVENT EMITTED FOR TRACKED PROJECT');
 
                                     // 🔌 MOTOR OFF: Turn off motor when processing starts
                                     console.log('🔌 MOTOR: Turning OFF motor - Processing Photogrammetry detected');
                                     try {
                                         const motorOffUrl = 'http://localhost:3002/api/motor/control/off';
-                                        console.log('🔌 MOTOR: Calling motor OFF endpoint:', motorOffUrl);
                                         const motorResponse = await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(motorOffUrl, { method: 'POST' });
                                         const motorResult = await motorResponse.json().catch(() => ({}));
                                         console.log('🔌 MOTOR: Motor OFF response:', motorResult);
