@@ -86,11 +86,34 @@ class KiriEngineAutomation {
                 headless: this.headless,
                 defaultViewport: null,
                 userDataDir: this.sessionPath,
-                // Set download directory
                 downloadsPath: appDownloadsDir,
-                // Add timeout for browser launch
                 timeout: 60000,
-
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-download-protection',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--disable-default-apps',
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-ipc-flooding-protection',
+                    '--allow-running-insecure-content',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
+                    `--download-dir=${appDownloadsDir}`
+                ]
             };
 
             // Add browser-specific configurations
