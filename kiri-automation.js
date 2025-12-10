@@ -2305,9 +2305,9 @@ class KiriEngineAutomation {
                         }
                     }
 
-                    // After successful download, just close the browser (no logout)
-                    console.log('Download process completed - closing browser...');
-                    await this.close();
+                    // After successful download, return success without closing browser
+                    // Let the server handle browser closure after all progress broadcasts complete
+                    console.log('Download process completed - returning success...');
 
                     return { success: true, message: '3D model export and download completed' };
                 } else {
@@ -2603,6 +2603,25 @@ class KiriEngineAutomation {
                                 if (statusText.includes('Processing')) {
                                     console.log('🚀 EMITTING PROCESSING PROGRESS EVENT');
                                     global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
+
+                                    // Also update pipeline state via API to ensure server-side state is updated
+                                    try {
+                                        const updateUrl = 'http://localhost:3002/api/update-pipeline-state';
+                                        const updatePayload = {
+                                            pipeline: 'scan',
+                                            stepIndex: 2,
+                                            stepName: 'Processing Photogrammetry',
+                                            status: 'active',
+                                            message: 'Processing 3D model in Kiri Engine...'
+                                        };
+                                        await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(updateUrl, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(updatePayload)
+                                        });
+                                    } catch (e) {
+                                        console.error('Error updating pipeline state:', e.message);
+                                    }
                                     console.log('🚀 PROCESSING PROGRESS EVENT EMITTED');
                                 }
                             }
@@ -2650,8 +2669,25 @@ class KiriEngineAutomation {
                                     console.log('🚀 EMITTING PROCESSING PROGRESS EVENT FOR TRACKED PROJECT');
                                     global.io.emit('progress', { step: 'processing', message: 'Processing 3D model in Kiri Engine...' });
 
-                                    // 🔌 MOTOR OFF: Turn off motor when processing starts
-                                    console.log('🔌 MOTOR: Turning OFF motor - Processing Photogrammetry detected');
+                                    // Also update pipeline state via API to ensure server-side state is updated
+                                    try {
+                                        const updateUrl = 'http://localhost:3002/api/update-pipeline-state';
+                                        const updatePayload = {
+                                            pipeline: 'scan',
+                                            stepIndex: 2,
+                                            stepName: 'Processing Photogrammetry',
+                                            status: 'active',
+                                            message: 'Processing 3D model in Kiri Engine...'
+                                        };
+                                        await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(updateUrl, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(updatePayload)
+                                        });
+                                    } catch (e) {
+                                        console.error('Error updating pipeline state:', e.message);
+                                    }
+
                                     try {
                                         const motorOffUrl = 'http://localhost:3002/api/motor/control/off';
                                         const motorResponse = await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(motorOffUrl, { method: 'POST' });
@@ -2669,6 +2705,25 @@ class KiriEngineAutomation {
                                         step: 'error',
                                         message: `Tracked project failed in Kiri Engine: ${statusText}`
                                     });
+
+                                    // Also update pipeline state via API to mark as failed
+                                    try {
+                                        const updateUrl = 'http://localhost:3002/api/update-pipeline-state';
+                                        const updatePayload = {
+                                            pipeline: 'scan',
+                                            stepIndex: 2,
+                                            stepName: 'Processing Photogrammetry',
+                                            status: 'failed',
+                                            message: `Tracked project failed in Kiri Engine: ${statusText}`
+                                        };
+                                        await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(updateUrl, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(updatePayload)
+                                        });
+                                    } catch (e) {
+                                        console.error('Error updating pipeline state:', e.message);
+                                    }
 
                                     // Stop the monitoring cycle inside automation
                                     try {
@@ -2705,6 +2760,25 @@ class KiriEngineAutomation {
 
                                 // Emit progress event for download step
                                 global.io.emit('progress', { step: 'download', message: 'Downloading 3D model files...' });
+
+                                // Also update pipeline state via API to ensure server-side state is updated
+                                try {
+                                    const updateUrl = 'http://localhost:3002/api/update-pipeline-state';
+                                    const updatePayload = {
+                                        pipeline: 'scan',
+                                        stepIndex: 3,
+                                        stepName: 'Downloading 3D',
+                                        status: 'active',
+                                        message: 'Downloading 3D model files...'
+                                    };
+                                    await (typeof fetch !== 'undefined' ? fetch : require('node-fetch'))(updateUrl, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(updatePayload)
+                                    });
+                                } catch (e) {
+                                    console.error('Error updating pipeline state:', e.message);
+                                }
                             }
 
                             // Stop the monitoring cycle

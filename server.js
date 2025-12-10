@@ -145,6 +145,7 @@ const UPLOAD_PIPELINE = {
 const PROGRESS_STEP_MAP = {
   'login': 0,
   'upload': 1,
+  'capturing': 1,    // Capturing Artifact (maps to step 1 for both scan and upload)
   'processing': 2,
   'download': 3,
   'auto-upload': 4,
@@ -172,12 +173,12 @@ let activePipelineType = null; // 'scan' or 'upload'
 
 // Configuration for VPS, CI4, and Blynk
 const VPS_CONFIG = {
-  baseUrl: config.VPS_BASE_URL || 'http://localhost:8080',
+  baseUrl: config.VPS_BASE_URL || 'https://crca-artifacts-contentmanagement.site',
   apiKey: config.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system'
 };
 
 const CI4_CONFIG = {
-  baseUrl: config.CI4_BASE_URL || 'http://localhost:8080',
+  baseUrl: config.CI4_BASE_URL || 'https://crca-artifacts-contentmanagement.site',
   apiKey: config.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024'
 };
 
@@ -238,6 +239,11 @@ function updatePipelineState(step, message, explicitPipeline = null) {
         activePipelineType = null;
         console.log(`✅ Pipeline ${pipeline} marked as COMPLETED`);
       } else {
+        // If we're moving to a new step, mark the previous step as completed
+        if (targetState.currentStep >= 0 && targetState.currentStep !== stepIndex) {
+          console.log(`✅ Step ${targetState.currentStep} marked as COMPLETED (moving to next step)`);
+        }
+
         targetState.isActive = true;
         targetState.currentStep = stepIndex;
         targetState.currentStatus = 'active';
@@ -916,7 +922,7 @@ app.post('/api/login-automation', async (req, res) => {
     if (loginResult.success) {
       console.log('Kiri Engine login successful via automation');
 
-      broadcastProgress('upload', 'Capturing photos with turntable rotation...', 'scan');
+      broadcastProgress('capturing', 'Capturing photos with turntable rotation...', 'scan');
 
       console.log('Starting page reload cycle after successful login...');
       automation.startPageReloadCycle();
@@ -1410,6 +1416,14 @@ app.post('/api/remote/start-automated-scanning', async (req, res) => {
 
     (async () => {
       try {
+        // Reset the scan pipeline state before starting
+        pipelineState.scan = {
+          isActive: false,
+          currentStep: -1,
+          currentStatus: 'pending',
+          lastUpdated: null
+        };
+
         activePipelineType = 'scan';
 
         if (automation) {
@@ -1446,7 +1460,7 @@ app.post('/api/remote/start-automated-scanning', async (req, res) => {
 
         console.log('✅ Kiri Engine login successful via remote trigger');
 
-        broadcastProgress('upload', 'Capturing photos with turntable rotation...', 'scan');
+        broadcastProgress('capturing', 'Capturing photos with turntable rotation...', 'scan');
 
         // console.log('🔌 MOTOR: Turning ON motor - Starting Capturing Artifact phase');
         try {
@@ -1783,7 +1797,14 @@ class CI4UploadWatcher {
       }
 
       broadcastProgress('download', '3D model download completed!', 'upload');
+
+      // Small delay to ensure download broadcast is processed
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       broadcastProgress('auto-upload', 'Auto-uploading GLB file to VPS...', 'upload');
+
+      // Small delay to ensure auto-upload broadcast is processed
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       for (const file of files) {
         try {
@@ -1805,8 +1826,14 @@ class CI4UploadWatcher {
       }
 
       isProcessing = false;
-      activePipelineType = null;
+
+      // Final broadcast to mark pipeline as complete
       broadcastProgress('complete', 'Processing completed successfully!', 'upload');
+
+      // Small delay to ensure complete broadcast is processed before clearing pipeline type
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      activePipelineType = null;
       console.log('✅ CI4 Upload Process Completed Successfully!');
 
     } catch (error) {
@@ -2118,6 +2145,32 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle VPS GLB file upload completion
+  socket.on('glb-uploaded', (data) => {
+    console.log('📦 GLB FILE UPLOADED EVENT RECEIVED:', data);
+
+    if (activePipelineType === 'upload') {
+      console.log('📦 Updating pipeline: Marking download as complete and moving to auto-upload completion');
+
+      // Mark download step as completed
+      updatePipelineState('download', 'GLB file downloaded and uploaded to VPS', 'upload');
+
+      // Small delay
+      setTimeout(() => {
+        // Mark auto-upload as completed
+        updatePipelineState('auto-upload', `GLB file uploaded successfully: ${data.filename || '3DModel.glb'}`, 'upload');
+
+        // Small delay
+        setTimeout(() => {
+          // Mark entire pipeline as complete
+          updatePipelineState('complete', 'Processing completed successfully!', 'upload');
+          activePipelineType = null;
+          console.log('✅ Pipeline marked as COMPLETE via GLB upload event');
+        }, 500);
+      }, 500);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected');
   });
@@ -2131,8 +2184,10 @@ process.on('SIGINT', async () => {
     await automation.close();
   }
   activePipelineType = null;
-  if (motorState === 'on') {
+  try {
     await blynkUpdateMotor('off');
+  } catch (e) {
+    console.log('Error turning off motor during shutdown:', e.message);
   }
   ci4UploadWatcher.stopWatching();
   zipExtractor.stopWatching();
