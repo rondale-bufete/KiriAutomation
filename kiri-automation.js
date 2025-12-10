@@ -1774,9 +1774,9 @@ class KiriEngineAutomation {
      * before attempting to interact with the fullscreen button.
      * NOTE: This should NEVER throw - always continues even on failure
      */
-    async waitForModelViewerToLoad(timeoutMs = 10000) {
+    async waitForModelViewerToLoad(timeoutMs = 30000) {
         try {
-            console.log('Waiting for model viewer to finish loading...');
+            console.log('⏳ Waiting for loading spinner to disappear...');
 
             // Check if page is valid first
             if (!this.page) {
@@ -1787,41 +1787,62 @@ class KiriEngineAutomation {
             // Use a simple polling approach instead of waitForFunction to avoid frame issues
             const startTime = Date.now();
             let spinnerGone = false;
+            let consecutiveChecks = 0;
+            const requiredConsecutiveChecks = 2; // Spinner must be gone for 2 consecutive checks
             
             while (Date.now() - startTime < timeoutMs && !spinnerGone) {
                 try {
-                    // Try to check for spinner
-                    spinnerGone = await this.page.evaluate(() => {
+                    // Try to check for spinner - look for the specific spinner SVG paths
+                    const spinnerExists = await this.page.evaluate(() => {
                         try {
+                            // Look for the distinctive circular stroke spinner
                             const paths = Array.from(document.querySelectorAll('svg path'));
                             const spinnerPath = paths.find(p => {
                                 const stroke = p.getAttribute('stroke') || '';
                                 const strokeWidth = p.getAttribute('stroke-width') || '';
-                                return stroke.includes('113,250,248') && strokeWidth === '12';
+                                const d = p.getAttribute('d') || '';
+                                // Match the spinner characteristics
+                                return (stroke.includes('113,250,248') || stroke.includes('rgb(113, 250, 248)')) &&
+                                       strokeWidth === '12' &&
+                                       d.includes('37.5115');
                             });
-                            return !spinnerPath;
+                            return spinnerPath !== undefined;
                         } catch (e) {
-                            return true; // Assume loaded on error
+                            return false; // On error, assume no spinner
                         }
                     });
                     
-                    if (spinnerGone) {
-                        console.log('Model viewer loaded (spinner not detected)');
-                        return;
+                    if (!spinnerExists) {
+                        consecutiveChecks++;
+                        console.log(`Spinner check ${consecutiveChecks}/${requiredConsecutiveChecks}: No spinner detected`);
+                        
+                        if (consecutiveChecks >= requiredConsecutiveChecks) {
+                            spinnerGone = true;
+                            console.log('✅ Loading spinner is gone - model viewer is ready!');
+                            return;
+                        }
+                    } else {
+                        consecutiveChecks = 0; // Reset counter if spinner is still present
+                        console.log('Spinner still present, waiting...');
                     }
                 } catch (evalError) {
                     // If evaluate fails (frame issues), wait and retry
-                    console.log('Spinner check failed:', evalError.message);
+                    console.log('Spinner check failed, retrying...', evalError.message);
+                    consecutiveChecks = 0; // Reset on error
                 }
                 
                 // Wait before next check using native setTimeout
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 1500));
             }
 
-            console.log('Model viewer wait completed (timeout or spinner gone)');
+            if (spinnerGone) {
+                console.log('✅ Model viewer is fully loaded');
+            } else {
+                console.log('⚠️ Timeout waiting for spinner - proceeding anyway');
+            }
         } catch (error) {
             // NEVER throw - just log and continue
-            console.log('Model viewer wait error (non-fatal):', error.message);
+            console.log('⚠️ Model viewer wait error (non-fatal):', error.message);
         }
     }
 
@@ -2107,42 +2128,242 @@ class KiriEngineAutomation {
             }
 
             // Model view page should now be loaded (navigation was handled in click handler)
-            console.log('Verifying model view page is ready...');
+            console.log('Waiting for loading spinner to disappear...');
             
-            // Verify page is ready before taking screenshot - use safe timeout
-            try {
-                // Use native setTimeout instead of page.waitForTimeout to avoid frame issues
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                // Try to check document ready state, but don't fail if it errors
+            // Ensure viewport is set correctly for headless mode
+            if (this.headless) {
                 try {
-                    const isReady = await this.page.evaluate(() => document.readyState === 'complete');
-                    console.log('Document ready state:', isReady ? 'complete' : 'not complete');
-                } catch (evalError) {
-                    console.log('Could not check document state:', evalError.message);
+                    await this.page.setViewport({ width: 1920, height: 1080 });
+                    console.log('Viewport set to 1920x1080 for headless mode');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (viewportErr) {
+                    console.log('Could not set viewport:', viewportErr.message);
                 }
-            } catch (readyError) {
-                console.log('Page ready check failed, continuing...', readyError.message);
             }
             
-            // Final stabilization wait using native setTimeout
+            // CRITICAL: Wait for loading spinner to be completely gone
+            await this.waitForModelViewerToLoad(30000); // 30 second timeout
+            
+            // Additional wait to ensure page is fully stable
+            console.log('Page stabilized, proceeding with fullscreen and screenshot...');
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // Click fullscreen button and take screenshot before downloading
-            // This is OPTIONAL - wrapped in try-catch to ensure export continues even if screenshot fails
-            console.log('Attempting fullscreen button and screenshot (optional)...');
+            // CRITICAL: Click fullscreen button BEFORE taking screenshot
+            console.log('Looking for fullscreen button...');
+            let fullscreenButton = null;
+            
+            // Use the exact selector provided by user
+            const fullscreenSelectors = [
+                'button[data-v-97fcb96b]',  // Exact selector from user
+                'div.screenfull button[data-v-97fcb96b]',
+                'div[data-v-97fcb96b].screenfull button',
+                'div.screenfull button'
+            ];
+            
+            for (const selector of fullscreenSelectors) {
+                try {
+                    fullscreenButton = await this.page.$(selector);
+                    if (fullscreenButton) {
+                        // Verify it has the SVG icon
+                        const hasSvg = await this.page.evaluate((btn) => {
+                            return btn.querySelector('svg') !== null;
+                        }, fullscreenButton);
+                        
+                        if (hasSvg) {
+                            console.log(`✅ Fullscreen button found with selector: ${selector}`);
+                            break;
+                        } else {
+                            fullscreenButton = null;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            
+            if (!fullscreenButton) {
+                console.log('⚠️ Fullscreen button not found - trying alternative search...');
+                // Try to find by SVG content
+                try {
+                    fullscreenButton = await this.page.evaluateHandle(() => {
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            const svg = btn.querySelector('svg[viewBox="0 0 26 26"]');
+                            if (svg) return btn;
+                        }
+                        return null;
+                    });
+                    
+                    const isValid = await this.page.evaluate(el => el !== null && el.tagName === 'BUTTON', fullscreenButton);
+                    if (!isValid) fullscreenButton = null;
+                } catch (e) {
+                    console.log('Alternative search failed:', e.message);
+                }
+            }
+            
+            if (fullscreenButton) {
+                console.log('Clicking fullscreen button (headless-safe method)...');
+                let fullscreenActivated = false;
+                
+                // Multiple attempts with different methods
+                const clickMethods = [
+                    async () => {
+                        // Method 1: Scroll into view + regular click
+                        console.log('Attempting Method 1: Scroll + Regular Click');
+                        await this.page.evaluate(el => {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                        }, fullscreenButton);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Check if element is visible and in viewport
+                        const isVisible = await this.page.evaluate(el => {
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            return rect.width > 0 && 
+                                   rect.height > 0 && 
+                                   rect.top >= 0 && 
+                                   rect.left >= 0 &&
+                                   rect.bottom <= window.innerHeight &&
+                                   rect.right <= window.innerWidth &&
+                                   style.display !== 'none' &&
+                                   style.visibility !== 'hidden' &&
+                                   style.opacity !== '0';
+                        }, fullscreenButton);
+                        
+                        if (!isVisible) {
+                            throw new Error('Button not visible in viewport');
+                        }
+                        
+                        await fullscreenButton.click({ delay: 100 });
+                        return true;
+                    },
+                    async () => {
+                        // Method 2: JavaScript click (bypasses visibility checks)
+                        console.log('Attempting Method 2: JavaScript Click');
+                        await this.page.evaluate(el => {
+                            el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            // Force click using JavaScript
+                            el.click();
+                        }, fullscreenButton);
+                        return true;
+                    },
+                    async () => {
+                        // Method 3: Mouse coordinates click (most reliable for headless)
+                        console.log('Attempting Method 3: Mouse Coordinates Click');
+                        const box = await fullscreenButton.boundingBox();
+                        if (!box) {
+                            throw new Error('Could not get button bounding box');
+                        }
+                        
+                        // Click at center of button
+                        const x = box.x + box.width / 2;
+                        const y = box.y + box.height / 2;
+                        
+                        await this.page.mouse.move(x, y, { steps: 10 });
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        await this.page.mouse.click(x, y, { delay: 100 });
+                        return true;
+                    },
+                    async () => {
+                        // Method 4: Dispatch events directly
+                        console.log('Attempting Method 4: Direct Event Dispatch');
+                        await this.page.evaluate(el => {
+                            el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            // Create and dispatch click event
+                            const clickEvent = new MouseEvent('click', {
+                                view: window,
+                                bubbles: true,
+                                cancelable: true
+                            });
+                            el.dispatchEvent(clickEvent);
+                        }, fullscreenButton);
+                        return true;
+                    }
+                ];
+                
+                // Try each method until one succeeds
+                for (let i = 0; i < clickMethods.length && !fullscreenActivated; i++) {
+                    try {
+                        await clickMethods[i]();
+                        console.log(`✅ Click method ${i + 1} executed`);
+                        
+                        // Wait and verify fullscreen was activated
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+                        
+                        // Check if fullscreen is active
+                        fullscreenActivated = await this.page.evaluate(() => {
+                            return !!(document.fullscreenElement || 
+                                     document.webkitFullscreenElement || 
+                                     document.mozFullScreenElement || 
+                                     document.msFullscreenElement);
+                        });
+                        
+                        if (fullscreenActivated) {
+                            console.log('✅ Fullscreen mode activated successfully!');
+                            break;
+                        } else {
+                            console.log(`⚠️ Click method ${i + 1} executed but fullscreen not activated, trying next method...`);
+                        }
+                    } catch (methodErr) {
+                        console.log(`⚠️ Click method ${i + 1} failed:`, methodErr.message);
+                        if (i < clickMethods.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+                }
+                
+                if (!fullscreenActivated) {
+                    console.log('⚠️ Fullscreen button clicked but fullscreen not activated - proceeding anyway');
+                    // Still wait a bit in case it's activating
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else {
+                    // Additional wait for fullscreen transition
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            } else {
+                console.log('⚠️ Fullscreen button not found - proceeding without fullscreen');
+            }
+            
+            // Take screenshot in fullscreen mode
+            console.log('📸 Taking screenshot...');
             let screenshotPath = null;
             try {
-                screenshotPath = await this.clickFullscreenAndTakeScreenshot();
-                if (screenshotPath) {
-                    console.log(`Screenshot saved to: ${screenshotPath}`);
-                    this.lastScreenshotPath = screenshotPath;
-                } else {
-                    console.log('Screenshot skipped or failed (non-fatal)');
+                const timestamp = Date.now();
+                const screenshotFilename = `model_screenshot_${timestamp}.png`;
+                const extractedDir = path.resolve(__dirname, 'extracted');
+                await fs.ensureDir(extractedDir);
+                
+                const screenshotPathFull = path.join(extractedDir, screenshotFilename);
+                
+                // Wait a bit more for fullscreen transition
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Take screenshot
+                await this.page.screenshot({
+                    path: screenshotPathFull,
+                    fullPage: false  // Viewport only to avoid frame issues
+                });
+                
+                screenshotPath = screenshotPathFull;
+                this.lastScreenshotPath = screenshotPath;
+                console.log(`✅ Screenshot saved: ${screenshotPath}`);
+                
+                // Exit fullscreen if we entered it
+                if (fullscreenButton) {
+                    try {
+                        await this.page.evaluate(() => {
+                            const btn = document.querySelector('button[data-v-97fcb96b]');
+                            if (btn) btn.click();
+                        });
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        console.log('Exited fullscreen mode');
+                    } catch (e) {
+                        console.log('Could not exit fullscreen:', e.message);
+                    }
                 }
             } catch (screenshotError) {
-                console.log('⚠️ Screenshot failed (non-fatal):', screenshotError.message);
-                // Continue with export - screenshot is optional
+                console.log('⚠️ Screenshot failed:', screenshotError.message);
+                // Continue with export - screenshot is optional but we tried
             }
 
             // Click the Export button
@@ -2348,12 +2569,25 @@ class KiriEngineAutomation {
                     // Set up download event listeners before clicking
                     let downloadStarted = false;
                     let downloadFinished = false;
+                    let capturedDownloadUrl = null;
+                    
+                    // Use app's downloads directory consistently
+                    const appDownloadsDir = path.resolve(__dirname, 'downloads');
+                    const extractedDir = path.resolve(__dirname, 'extracted');
+                    
+                    // Ensure directories exist
+                    await fs.ensureDir(appDownloadsDir);
+                    await fs.ensureDir(extractedDir);
+                    
+                    console.log('Download directory:', appDownloadsDir);
+                    console.log('Extracted directory:', extractedDir);
 
-                    // Listen for download events
+                    // Listen for download events and capture the URL
                     this.page.on('response', async (response) => {
                         const url = response.url();
-                        if (url.includes('download') || url.includes('.zip') || url.includes('.glb')) {
-                            console.log('Download response detected:', url);
+                        if (url.includes('.zip') || url.includes('cloudflarestorage') || url.includes('r2.cloudflarestorage')) {
+                            console.log('Download URL captured:', url);
+                            capturedDownloadUrl = url;
                             downloadStarted = true;
                         }
                     });
@@ -2431,188 +2665,171 @@ class KiriEngineAutomation {
                     
                     console.log('Download button clicked - 3D model download started');
 
-                    // Wait for download to actually complete by monitoring download events
-                    console.log('Waiting for download to complete...');
-                    let downloadCompleted = false;
-                    let downloadTimeout = 0;
-                    const maxDownloadTimeout = 120000; // 2 minutes max
-
-                    // Get initial file count in default downloads directory
-                    const fs = require('fs');
-                    const path = require('path');
-                    const os = require('os');
-                    const downloadsDir = path.join(os.homedir(), 'Downloads');
-
-                    // Ensure downloads directory exists
-                    if (!fs.existsSync(downloadsDir)) {
-                        fs.mkdirSync(downloadsDir, { recursive: true });
+                    // Wait for download URL to be captured (max 30 seconds)
+                    console.log('Waiting for download URL to be captured...');
+                    let urlWaitTime = 0;
+                    const maxUrlWaitTime = 30000;
+                    
+                    while (!capturedDownloadUrl && urlWaitTime < maxUrlWaitTime) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        urlWaitTime += 1000;
+                        console.log(`Waiting for download URL... (${urlWaitTime / 1000}s)`);
                     }
-
-                    const initialFiles = fs.readdirSync(downloadsDir);
-                    console.log(`Monitoring downloads in: ${downloadsDir}`);
-                    console.log(`Initial files in downloads directory: ${initialFiles.length}`);
-
-                    // Monitor for download completion
-                    while (!downloadCompleted && downloadTimeout < maxDownloadTimeout) {
-                        try {
-                            // Check if new files appeared in downloads directory
-                            const currentFiles = fs.readdirSync(downloadsDir);
-                            if (currentFiles.length > initialFiles.length) {
-                                console.log('New files detected in downloads directory!');
-                                const newFiles = currentFiles.filter(file => !initialFiles.includes(file));
-                                console.log('Downloaded files:', newFiles);
-
-                                // Check if files are actually complete (not just created)
-                                let allFilesComplete = true;
-                                for (const file of newFiles) {
-                                    const filePath = path.join(downloadsDir, file);
-                                    const stats = fs.statSync(filePath);
-
-                                    // Check if file is still being written (size is 0 or very small)
-                                    if (stats.size < 1024) { // Less than 1KB
-                                        console.log(`File ${file} is still being written (${stats.size} bytes)`);
-                                        allFilesComplete = false;
-                                        break;
-                                    }
-
-                                    // Check if file was modified recently (within last 5 seconds)
-                                    const now = Date.now();
-                                    const fileModified = stats.mtime.getTime();
-                                    if (now - fileModified < 5000) {
-                                        console.log(`File ${file} was modified recently, still downloading...`);
-                                        allFilesComplete = false;
-                                        break;
-                                    }
-                                }
-
-                                if (allFilesComplete) {
-                                    console.log('All files appear to be complete');
-                                    downloadCompleted = true;
-                                    break;
-                                }
-                            }
-
-                            // Check if download is complete by looking for download indicators
-                            const downloadIndicators = await this.page.evaluate(() => {
-                                // Look for download completion indicators on the page
-                                const indicators = [
-                                    'Download complete',
-                                    'Download finished',
-                                    'Download successful',
-                                    'File downloaded',
-                                    'Downloaded successfully'
-                                ];
-
-                                const pageText = document.body.textContent.toLowerCase();
-                                return indicators.some(indicator =>
-                                    pageText.includes(indicator.toLowerCase())
-                                );
-                            });
-
-                            if (downloadIndicators) {
-                                console.log('Download completion indicators found');
-                                downloadCompleted = true;
-                                break;
-                            }
-
-                            // Check if download button is still present (indicates download in progress)
-                            const downloadButtonStillPresent = await this.page.evaluate(() => {
-                                const buttons = document.querySelectorAll('button');
-                                for (const button of buttons) {
-                                    const text = button.textContent;
-                                    if (text && text.includes('Download')) {
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            });
-
-                            if (!downloadButtonStillPresent) {
-                                console.log('Download button disappeared - download may be complete');
-                                downloadCompleted = true;
-                                break;
-                            }
-
-                            // Wait a bit before checking again
-                            await this.page.waitForTimeout(2000);
-                            downloadTimeout += 2000;
-
-                        } catch (e) {
-                            console.log('Error checking download status:', e.message);
-                            await this.page.waitForTimeout(2000);
-                            downloadTimeout += 2000;
-                        }
-                    }
-
-                    if (downloadCompleted) {
-                        console.log('Download completed successfully');
-
-                        // Verify files are actually downloaded and accessible
-                        const finalFiles = fs.readdirSync(downloadsDir);
-                        const downloadedFiles = finalFiles.filter(file => !initialFiles.includes(file));
-
-                        if (downloadedFiles.length > 0) {
-                            console.log('Successfully downloaded files:');
-                            for (const file of downloadedFiles) {
-                                const filePath = path.join(downloadsDir, file);
-                                const stats = fs.statSync(filePath);
-                                console.log(`- ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-                            }
+                    
+                    if (!capturedDownloadUrl) {
+                        console.log('⚠️ No download URL captured - trying to check for browser downloads...');
+                        // Fallback: Check if file appeared in app downloads directory
+                        const existingFiles = await fs.readdir(appDownloadsDir);
+                        const zipFiles = existingFiles.filter(f => f.endsWith('.zip'));
+                        if (zipFiles.length > 0) {
+                            console.log('Found existing zip files in downloads:', zipFiles);
                         } else {
-                            console.log('Warning: No new files found in downloads directory');
+                            throw new Error('Download URL not captured and no files found');
                         }
                     } else {
-                        console.log('Download timeout reached - checking for partial downloads...');
-
-                        // Check for any files that might have been downloaded
-                        const finalFiles = fs.readdirSync(downloadsDir);
-                        const downloadedFiles = finalFiles.filter(file => !initialFiles.includes(file));
-
-                        if (downloadedFiles.length > 0) {
-                            console.log('Found partial downloads:');
-                            for (const file of downloadedFiles) {
-                                const filePath = path.join(downloadsDir, file);
-                                const stats = fs.statSync(filePath);
-                                console.log(`- ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+                        // Download the file directly using Node.js
+                        console.log('📥 Downloading file directly via Node.js...');
+                        console.log('Download URL:', capturedDownloadUrl);
+                        
+                        const https = require('https');
+                        const http = require('http');
+                        const { URL } = require('url');
+                        
+                        const downloadFile = (url, destPath) => {
+                            return new Promise((resolve, reject) => {
+                                const parsedUrl = new URL(url);
+                                const protocol = parsedUrl.protocol === 'https:' ? https : http;
+                                
+                                console.log(`Downloading to: ${destPath}`);
+                                
+                                const file = require('fs').createWriteStream(destPath);
+                                
+                                const request = protocol.get(url, (response) => {
+                                    // Handle redirects
+                                    if (response.statusCode === 301 || response.statusCode === 302) {
+                                        console.log('Following redirect to:', response.headers.location);
+                                        file.close();
+                                        require('fs').unlinkSync(destPath);
+                                        downloadFile(response.headers.location, destPath)
+                                            .then(resolve)
+                                            .catch(reject);
+                                        return;
+                                    }
+                                    
+                                    if (response.statusCode !== 200) {
+                                        reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+                                        return;
+                                    }
+                                    
+                                    const totalSize = parseInt(response.headers['content-length'], 10) || 0;
+                                    let downloadedSize = 0;
+                                    
+                                    response.on('data', (chunk) => {
+                                        downloadedSize += chunk.length;
+                                        if (totalSize > 0) {
+                                            const percent = ((downloadedSize / totalSize) * 100).toFixed(1);
+                                            process.stdout.write(`\rDownloading: ${percent}% (${(downloadedSize / 1024 / 1024).toFixed(2)} MB)`);
+                                        }
+                                    });
+                                    
+                                    response.pipe(file);
+                                    
+                                    file.on('finish', () => {
+                                        file.close();
+                                        console.log('\n✅ Download complete!');
+                                        resolve(destPath);
+                                    });
+                                });
+                                
+                                request.on('error', (err) => {
+                                    file.close();
+                                    require('fs').unlink(destPath, () => {}); // Delete partial file
+                                    reject(err);
+                                });
+                                
+                                file.on('error', (err) => {
+                                    file.close();
+                                    require('fs').unlink(destPath, () => {}); // Delete partial file
+                                    reject(err);
+                                });
+                                
+                                // Set timeout
+                                request.setTimeout(120000, () => {
+                                    request.destroy();
+                                    reject(new Error('Download timeout after 2 minutes'));
+                                });
+                            });
+                        };
+                        
+                        // Generate filename from URL or use timestamp
+                        const timestamp = Date.now();
+                        const zipFilename = `model_${timestamp}.zip`;
+                        const zipPath = path.join(appDownloadsDir, zipFilename);
+                        
+                        try {
+                            await downloadFile(capturedDownloadUrl, zipPath);
+                            console.log(`✅ File downloaded to: ${zipPath}`);
+                            
+                            // Verify file exists and has content
+                            const stats = await fs.stat(zipPath);
+                            console.log(`Downloaded file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+                            
+                            if (stats.size < 1024) {
+                                throw new Error('Downloaded file is too small, may be corrupt');
                             }
+                            
+                            // Unzip the file
+                            console.log('📦 Extracting zip file...');
+                            const AdmZip = require('adm-zip');
+                            const zip = new AdmZip(zipPath);
+                            zip.extractAllTo(extractedDir, true);
+                            console.log(`✅ Extracted to: ${extractedDir}`);
+                            
+                            // List extracted files
+                            const extractedFiles = await fs.readdir(extractedDir);
+                            console.log('Extracted files:', extractedFiles);
+                            
+                            // Move screenshot to extracted folder if it exists
+                            if (this.lastScreenshotPath && await fs.pathExists(this.lastScreenshotPath)) {
+                                const screenshotName = path.basename(this.lastScreenshotPath);
+                                // Screenshot is already in extracted folder, just log it
+                                console.log(`Screenshot already in extracted folder: ${screenshotName}`);
+                            }
+                            
+                            // Optionally delete the zip file after extraction
+                            try {
+                                await fs.remove(zipPath);
+                                console.log('Cleaned up zip file');
+                            } catch (cleanupErr) {
+                                console.log('Could not clean up zip file:', cleanupErr.message);
+                            }
+                            
+                        } catch (downloadErr) {
+                            console.error('❌ Download/extraction failed:', downloadErr.message);
+                            throw downloadErr;
                         }
                     }
 
-                    // Navigate away from download/share page as soon as we detect success
+                    // Navigate away from download/share page
                     console.log('Navigating away from download page to mymodel page...');
-                    const currentUrl = this.page.url();
-                    console.log('Current URL before navigation:', currentUrl);
-
-                    // Check if we're on a download/share page (handle variants with/without trailing slash or query)
-                    const isDownloadPage = currentUrl.includes('/share/download') || currentUrl.includes('/download');
-                    if (isDownloadPage) {
-                        console.log('Detected download/share page - navigating to mymodel immediately...');
-                        try {
+                    try {
+                        const currentUrl = this.page.url();
+                        console.log('Current URL before navigation:', currentUrl);
+                        
+                        if (currentUrl.includes('/share/download') || currentUrl.includes('/download')) {
                             await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
                                 waitUntil: 'networkidle2',
                                 timeout: 30000
                             });
-                            await this.page.waitForTimeout(2000);
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                             console.log('Successfully navigated to mymodel page');
-                        } catch (navError) {
-                            console.log('Navigation to mymodel failed, trying again...', navError.message);
-                            // Retry navigation with a more lenient strategy
-                            try {
-                                await this.page.goto('https://www.kiriengine.app/webapp/mymodel', {
-                                    waitUntil: 'domcontentloaded',
-                                    timeout: 30000
-                                });
-                                await this.page.waitForTimeout(2000);
-                                console.log('Successfully navigated to mymodel page (fallback)');
-                            } catch (retryError) {
-                                console.log('Retry navigation also failed:', retryError.message);
-                            }
                         }
+                    } catch (navError) {
+                        console.log('Navigation warning:', navError.message);
                     }
 
-                    // After successful download, return success without closing browser
-                    // Let the server handle browser closure after all progress broadcasts complete
-                    console.log('Download process completed - returning success...');
+                    // After successful download, return success
+                    console.log('✅ Download process completed successfully!');
 
                     return { success: true, message: '3D model export and download completed' };
                 } else {

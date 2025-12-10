@@ -270,6 +270,52 @@ function updatePipelineState(step, message, explicitPipeline = null) {
   }
 }
 
+/**
+ * Clean up extracted folder - removes all files and folders
+ * This should be called after successful VPS upload
+ */
+async function cleanupExtractedFolder() {
+  try {
+    const extractedDir = path.join(__dirname, 'extracted');
+    console.log('🧹 Cleaning up extracted folder...');
+    
+    // Check if directory exists
+    if (!await fs.pathExists(extractedDir)) {
+      console.log('ℹ️ Extracted folder does not exist');
+      return;
+    }
+    
+    // Get all items in extracted folder
+    const items = await fs.readdir(extractedDir);
+    
+    if (items.length === 0) {
+      console.log('ℹ️ Extracted folder is already empty');
+      return;
+    }
+    
+    let cleanedCount = 0;
+    for (const item of items) {
+      const itemPath = path.join(extractedDir, item);
+      
+      try {
+        // Delete EVERYTHING in extracted folder (files and folders)
+        await fs.remove(itemPath);
+        cleanedCount++;
+        console.log(`✅ Cleaned up: ${item}`);
+      } catch (itemErr) {
+        console.log(`⚠️ Could not remove ${item}:`, itemErr.message);
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      console.log(`✅ Extracted folder cleanup completed (${cleanedCount} item(s) removed)`);
+    }
+  } catch (cleanupError) {
+    console.error('❌ Error cleaning up extracted folder:', cleanupError.message);
+    // Don't throw - cleanup failures shouldn't break the pipeline
+  }
+}
+
 async function blynkApiGet(endpoint, query = '') {
   const url = `https://${BLYNK_CONFIG.server}/external/api/${endpoint}?token=${BLYNK_CONFIG.token}${query}`;
 
@@ -743,6 +789,12 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
 
     // Small delay to ensure complete broadcast is processed before clearing pipeline type
     await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Clean up extracted folder after upload completes (backup cleanup)
+    // Note: Main cleanup happens in socket handler, but this ensures cleanup even if socket event fails
+    setTimeout(async () => {
+      await cleanupExtractedFolder();
+    }, 2000); // Wait 2 seconds to ensure VPS upload completes first
 
     activePipelineType = null;
 
@@ -1883,6 +1935,12 @@ class CI4UploadWatcher {
       // Small delay to ensure complete broadcast is processed before clearing pipeline type
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      // Clean up extracted folder after upload completes (backup cleanup)
+      // Note: Main cleanup happens in socket handler, but this ensures cleanup even if socket event fails
+      setTimeout(async () => {
+        await cleanupExtractedFolder();
+      }, 2000); // Wait 2 seconds to ensure VPS upload completes first
+
       activePipelineType = null;
       console.log('✅ CI4 Upload Process Completed Successfully!');
 
@@ -2196,7 +2254,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle VPS GLB file upload completion
-  socket.on('glb-uploaded', (data) => {
+  socket.on('glb-uploaded', async (data) => {
     console.log('📦 GLB FILE UPLOADED EVENT RECEIVED:', data);
 
     if (activePipelineType === 'upload') {
@@ -2206,9 +2264,12 @@ io.on('connection', (socket) => {
       updatePipelineState('download', 'GLB file downloaded and uploaded to VPS', 'upload');
 
       // Small delay
-      setTimeout(() => {
+      setTimeout(async () => {
         // Mark auto-upload as completed
         updatePipelineState('auto-upload', `GLB file uploaded successfully: ${data.filename || '3DModel.glb'}`, 'upload');
+
+        // Clean up extracted folder after successful VPS upload
+        await cleanupExtractedFolder();
 
         // Small delay
         setTimeout(() => {

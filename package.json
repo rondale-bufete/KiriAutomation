@@ -26,6 +26,7 @@
 		"@serialport/bindings-cpp": "^12.0.0",
 		"@serialport/parser-readline": "^12.0.0",
 		"@serialport/stream": "^12.0.0",
+		"adm-zip": "^0.5.16",
 		"chokidar": "^3.5.3",
 		"cors": "^2.8.5",
 		"dotenv": "^16.3.1",
