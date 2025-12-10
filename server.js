@@ -234,11 +234,21 @@ function updatePipelineState(step, message, explicitPipeline = null) {
       }
 
       if (stepIndex === -1) {
+        // Pipeline complete - reset ALL state
         targetState.currentStatus = 'completed';
         targetState.isActive = false;
+        targetState.currentStep = -1;  // FIX: Reset currentStep to -1
+        targetState.lastUpdated = new Date().toISOString();
         activePipelineType = null;
-        console.log(`✅ Pipeline ${pipeline} marked as COMPLETED`);
+        console.log(`✅ Pipeline ${pipeline} marked as COMPLETED (all state reset)`);
       } else {
+        // Guard: Don't reactivate a completed pipeline with stale events
+        // Only allow reactivation if explicitly starting from step 0 (login)
+        if (targetState.currentStatus === 'completed' && stepIndex > 0) {
+          console.log(`⚠️ Ignoring stale event for completed ${pipeline} pipeline (step ${stepIndex})`);
+          return;
+        }
+
         // If we're moving to a new step, mark the previous step as completed
         if (targetState.currentStep >= 0 && targetState.currentStep !== stepIndex) {
           console.log(`✅ Step ${targetState.currentStep} marked as COMPLETED (moving to next step)`);
@@ -1121,6 +1131,19 @@ app.post('/api/update-pipeline-state', (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing pipeline or stepIndex' });
     }
 
+    // Get the target pipeline state
+    const targetState = pipelineState[pipeline];
+    if (!targetState) {
+      return res.status(400).json({ success: false, error: `Unknown pipeline: ${pipeline}` });
+    }
+
+    // Guard: Don't reactivate a completed pipeline with stale events
+    // Only allow reactivation if explicitly starting from step 0 (login) or marking as failed
+    if (targetState.currentStatus === 'completed' && stepIndex > 0 && status === 'active') {
+      console.log(`⚠️ Ignoring stale API event for completed ${pipeline} pipeline (step ${stepIndex})`);
+      return res.json({ success: true, message: 'Ignored stale event for completed pipeline', state: pipelineState });
+    }
+
     if (stepIndex >= 0 && status === 'active' && !activePipelineType) {
       activePipelineType = pipeline;
       console.log(`📊 Set active pipeline type to: ${pipeline} (from frontend)`);
@@ -1137,12 +1160,24 @@ app.post('/api/update-pipeline-state', (req, res) => {
       pipelineState.scan.lastUpdated = new Date().toISOString();
       pipelineState.scan.isActive = stepIndex >= 0 && (status === 'active' || status === 'pending');
 
+      // Reset state properly when completed or failed
+      if (status === 'completed' || status === 'failed') {
+        pipelineState.scan.currentStep = -1;
+        pipelineState.scan.isActive = false;
+      }
+
       console.log(`✅ Pipeline State Updated (Frontend): SCAN - Step: ${stepIndex}, Name: ${stepName}, Status: ${status}`);
     } else if (pipeline === 'upload' && pipelineState.upload) {
       pipelineState.upload.currentStep = stepIndex;
       pipelineState.upload.currentStatus = status;
       pipelineState.upload.lastUpdated = new Date().toISOString();
       pipelineState.upload.isActive = stepIndex >= 0 && (status === 'active' || status === 'pending');
+
+      // Reset state properly when completed or failed
+      if (status === 'completed' || status === 'failed') {
+        pipelineState.upload.currentStep = -1;
+        pipelineState.upload.isActive = false;
+      }
 
       console.log(`✅ Pipeline State Updated (Frontend): UPLOAD - Step: ${stepIndex}, Name: ${stepName}, Status: ${status}`);
     }

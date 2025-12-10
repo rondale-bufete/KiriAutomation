@@ -1,4 +1,4 @@
-//kiri-automation.js - PART 1 (Lines 1-90)
+//kiri-automation.js - Kiri Engine Automation Class
 
 const puppeteer = require('puppeteer');
 const fs = require('fs-extra');
@@ -1314,101 +1314,144 @@ class KiriEngineAutomation {
             // Check for and close Kiri Engine Pro advertisement modal if it appears
             await this.closeProAdvertisementModal();
 
+            // First, navigate to the main webapp page if not already there
+            const currentUrl = this.page.url();
+            console.log('Current URL before upload:', currentUrl);
+            
+            if (!currentUrl.includes('/webapp') || currentUrl.includes('/share/') || currentUrl.includes('/download/')) {
+                console.log('Navigating to webapp main page...');
+                await this.page.goto('https://www.kiriengine.app/webapp/', {
+                    waitUntil: 'networkidle2',
+                    timeout: 30000
+                });
+                await this.page.waitForTimeout(3000);
+            }
+
+            // Check for and close any modals that might be blocking
+            await this.closeProAdvertisementModal();
+
             // First, click on Photo Scan to start the upload process
             console.log('Clicking Photo Scan to start upload process...');
-            const photoScanSelectors = [
-                'div.a_l', // Main Photo Scan card
-                'div[data-v-07ce6356].a_l',
-                '.a_l',
-                'div:has-text("Photo Scan")',
-                'div:has-text("Support photo or video upload")'
-            ];
+            
+            // Wait for page to be fully loaded
+            await this.page.waitForTimeout(2000);
 
-            let photoScanCard = null;
-            for (const selector of photoScanSelectors) {
-                try {
-                    photoScanCard = await this.page.$(selector);
-                    if (photoScanCard) {
-                        // Verify it's the Photo Scan card by checking the text
-                        const cardText = await this.page.evaluate(el => el.textContent, photoScanCard);
-                        if (cardText && cardText.includes('Photo Scan')) {
-                            console.log('Photo Scan card found');
-                            break;
+            // Use page.evaluate to find Photo Scan card by text content (Puppeteer compatible)
+            let photoScanCard = await this.page.evaluateHandle(() => {
+                // Try multiple approaches to find Photo Scan card
+                const allDivs = document.querySelectorAll('div');
+                for (const div of allDivs) {
+                    const text = div.textContent || '';
+                    // Look for div that contains "Photo Scan" text
+                    if (text.includes('Photo Scan') && 
+                        (div.classList.contains('a_l') || 
+                         div.classList.contains('card') ||
+                         div.classList.contains('scan-card') ||
+                         div.querySelector('.title') ||
+                         div.querySelector('h3') ||
+                         div.querySelector('h4'))) {
+                        return div;
+                    }
+                }
+                
+                // Fallback: Look for specific class patterns
+                const cardSelectors = [
+                    'div.a_l',
+                    'div[class*="card"]',
+                    'div[class*="scan"]',
+                    'div[class*="photo"]'
+                ];
+                
+                for (const selector of cardSelectors) {
+                    const elements = document.querySelectorAll(selector);
+                    for (const el of elements) {
+                        if (el.textContent && el.textContent.includes('Photo Scan')) {
+                            return el;
                         }
                     }
-                } catch (e) {
-                    continue;
                 }
-            }
+                
+                return null;
+            });
 
-            if (!photoScanCard) {
+            // Check if we got a valid element
+            const isValidElement = await this.page.evaluate(el => el !== null && el.tagName !== undefined, photoScanCard);
+            
+            if (!isValidElement) {
+                // Log what's on the page for debugging
+                const pageContent = await this.page.evaluate(() => {
+                    const cards = document.querySelectorAll('div[class*="card"], div[class*="scan"], div.a_l');
+                    return Array.from(cards).map(c => ({
+                        className: c.className,
+                        text: c.textContent?.substring(0, 100)
+                    }));
+                });
+                console.log('Available cards on page:', JSON.stringify(pageContent, null, 2));
                 throw new Error('Could not find Photo Scan card');
             }
+
+            console.log('Photo Scan card found');
 
             // Click the Photo Scan card
             await photoScanCard.click();
             console.log('Photo Scan card clicked');
-            await this.page.waitForTimeout(2000);
+            await this.page.waitForTimeout(3000);
 
             // Now look for file upload input
-            const uploadSelectors = [
-                'input[type="file"]',
-                '.upload-area',
-                '.file-upload',
-                '[data-testid="file-upload"]',
-                '.dropzone',
-                '.upload-button',
-                '#upload-btn'
-            ];
+            console.log('Looking for file upload input...');
+            
+            // Wait for upload page to load
+            await this.page.waitForTimeout(2000);
 
-            let uploadElement = null;
-            for (const selector of uploadSelectors) {
-                try {
-                    uploadElement = await this.page.$(selector);
-                    if (uploadElement) break;
-                } catch (e) {
-                    continue;
-                }
+            let uploadElement = await this.page.$('input[type="file"]');
+            
+            if (!uploadElement) {
+                // Try to find hidden file input
+                uploadElement = await this.page.evaluateHandle(() => {
+                    const inputs = document.querySelectorAll('input[type="file"]');
+                    if (inputs.length > 0) return inputs[0];
+                    return null;
+                });
+                
+                const isValid = await this.page.evaluate(el => el !== null && el.tagName !== undefined, uploadElement);
+                if (!isValid) uploadElement = null;
             }
 
             if (!uploadElement) {
-                // Try to find upload button first
-                const uploadButtonSelectors = [
-                    'button:contains("Upload")',
-                    '.upload-btn',
-                    '#upload-btn',
-                    '[data-testid="upload"]',
-                    'button:contains("Add")',
-                    'button:contains("New")'
-                ];
-
-                for (const selector of uploadButtonSelectors) {
-                    try {
-                        const button = await this.page.$(selector);
-                        if (button) {
-                            await button.click();
-                            await this.page.waitForTimeout(2000);
-                            break;
+                // Click any visible upload button/area first
+                const uploadAreaClicked = await this.page.evaluate(() => {
+                    const uploadSelectors = [
+                        'div[class*="upload"]',
+                        'div[class*="drop"]',
+                        'button[class*="upload"]',
+                        '.upload-area',
+                        '.dropzone'
+                    ];
+                    
+                    for (const selector of uploadSelectors) {
+                        const el = document.querySelector(selector);
+                        if (el && el.offsetParent !== null) {
+                            el.click();
+                            return true;
                         }
-                    } catch (e) {
-                        continue;
                     }
+                    return false;
+                });
+                
+                if (uploadAreaClicked) {
+                    console.log('Clicked upload area, waiting for file input...');
+                    await this.page.waitForTimeout(2000);
                 }
-
+                
                 // Try to find file input again
-                for (const selector of uploadSelectors) {
-                    try {
-                        uploadElement = await this.page.$(selector);
-                        if (uploadElement) break;
-                    } catch (e) {
-                        continue;
-                    }
-                }
+                uploadElement = await this.page.$('input[type="file"]');
             }
 
             if (!uploadElement) {
                 throw new Error('Could not find file upload element after clicking Photo Scan');
             }
+
+            console.log('File upload input found');
 
             // Upload the file
             await uploadElement.uploadFile(filePath);
@@ -1463,104 +1506,144 @@ class KiriEngineAutomation {
 
             console.log(`Uploading ${filePaths.length} files`);
 
+            // First, navigate to the main webapp page if not already there
+            const currentUrl = this.page.url();
+            console.log('Current URL before upload:', currentUrl);
+            
+            if (!currentUrl.includes('/webapp') || currentUrl.includes('/share/') || currentUrl.includes('/download/')) {
+                console.log('Navigating to webapp main page...');
+                await this.page.goto('https://www.kiriengine.app/webapp/', {
+                    waitUntil: 'networkidle2',
+                    timeout: 30000
+                });
+                await this.page.waitForTimeout(3000);
+            }
+
             // Check for and close Kiri Engine Pro advertisement modal if it appears
             await this.closeProAdvertisementModal();
 
             // First, click on Photo Scan to start the upload process
             console.log('Clicking Photo Scan to start upload process...');
-            const photoScanSelectors = [
-                'div.a_l', // Main Photo Scan card
-                'div[data-v-07ce6356].a_l',
-                '.a_l',
-                'div:has-text("Photo Scan")',
-                'div:has-text("Support photo or video upload")'
-            ];
+            
+            // Wait for page to be fully loaded
+            await this.page.waitForTimeout(2000);
 
-            let photoScanCard = null;
-            for (const selector of photoScanSelectors) {
-                try {
-                    photoScanCard = await this.page.$(selector);
-                    if (photoScanCard) {
-                        // Verify it's the Photo Scan card by checking the text
-                        const cardText = await this.page.evaluate(el => el.textContent, photoScanCard);
-                        if (cardText && cardText.includes('Photo Scan')) {
-                            console.log('Photo Scan card found');
-                            break;
+            // Use page.evaluate to find Photo Scan card by text content (Puppeteer compatible)
+            let photoScanCard = await this.page.evaluateHandle(() => {
+                // Try multiple approaches to find Photo Scan card
+                const allDivs = document.querySelectorAll('div');
+                for (const div of allDivs) {
+                    const text = div.textContent || '';
+                    // Look for div that contains "Photo Scan" text
+                    if (text.includes('Photo Scan') && 
+                        (div.classList.contains('a_l') || 
+                         div.classList.contains('card') ||
+                         div.classList.contains('scan-card') ||
+                         div.querySelector('.title') ||
+                         div.querySelector('h3') ||
+                         div.querySelector('h4'))) {
+                        return div;
+                    }
+                }
+                
+                // Fallback: Look for specific class patterns
+                const cardSelectors = [
+                    'div.a_l',
+                    'div[class*="card"]',
+                    'div[class*="scan"]',
+                    'div[class*="photo"]'
+                ];
+                
+                for (const selector of cardSelectors) {
+                    const elements = document.querySelectorAll(selector);
+                    for (const el of elements) {
+                        if (el.textContent && el.textContent.includes('Photo Scan')) {
+                            return el;
                         }
                     }
-                } catch (e) {
-                    continue;
                 }
-            }
+                
+                return null;
+            });
 
-            if (!photoScanCard) {
+            // Check if we got a valid element
+            const isValidElement = await this.page.evaluate(el => el !== null && el.tagName !== undefined, photoScanCard);
+            
+            if (!isValidElement) {
+                // Log what's on the page for debugging
+                const pageContent = await this.page.evaluate(() => {
+                    const cards = document.querySelectorAll('div[class*="card"], div[class*="scan"], div.a_l');
+                    return Array.from(cards).map(c => ({
+                        className: c.className,
+                        text: c.textContent?.substring(0, 100)
+                    }));
+                });
+                console.log('Available cards on page:', JSON.stringify(pageContent, null, 2));
                 throw new Error('Could not find Photo Scan card');
             }
+
+            console.log('Photo Scan card found');
 
             // Click the Photo Scan card
             await photoScanCard.click();
             console.log('Photo Scan card clicked');
-            await this.page.waitForTimeout(2000);
+            await this.page.waitForTimeout(3000);
 
             // Now look for file upload input
-            const uploadSelectors = [
-                'input[type="file"]',
-                '.upload-area',
-                '.file-upload',
-                '[data-testid="file-upload"]',
-                '.dropzone',
-                '.upload-button',
-                '#upload-btn'
-            ];
+            console.log('Looking for file upload input...');
+            
+            // Wait for upload page to load
+            await this.page.waitForTimeout(2000);
 
-            let uploadElement = null;
-            for (const selector of uploadSelectors) {
-                try {
-                    uploadElement = await this.page.$(selector);
-                    if (uploadElement) break;
-                } catch (e) {
-                    continue;
-                }
+            let uploadElement = await this.page.$('input[type="file"]');
+            
+            if (!uploadElement) {
+                // Try to find hidden file input
+                uploadElement = await this.page.evaluateHandle(() => {
+                    const inputs = document.querySelectorAll('input[type="file"]');
+                    if (inputs.length > 0) return inputs[0];
+                    return null;
+                });
+                
+                const isValid = await this.page.evaluate(el => el !== null && el.tagName !== undefined, uploadElement);
+                if (!isValid) uploadElement = null;
             }
 
             if (!uploadElement) {
-                // Try to find upload button first
-                const uploadButtonSelectors = [
-                    'button:contains("Upload")',
-                    '.upload-btn',
-                    '#upload-btn',
-                    '[data-testid="upload"]',
-                    'button:contains("Add")',
-                    'button:contains("New")'
-                ];
-
-                for (const selector of uploadButtonSelectors) {
-                    try {
-                        const button = await this.page.$(selector);
-                        if (button) {
-                            await button.click();
-                            await this.page.waitForTimeout(2000);
-                            break;
+                // Click any visible upload button/area first
+                const uploadAreaClicked = await this.page.evaluate(() => {
+                    const uploadSelectors = [
+                        'div[class*="upload"]',
+                        'div[class*="drop"]',
+                        'button[class*="upload"]',
+                        '.upload-area',
+                        '.dropzone'
+                    ];
+                    
+                    for (const selector of uploadSelectors) {
+                        const el = document.querySelector(selector);
+                        if (el && el.offsetParent !== null) {
+                            el.click();
+                            return true;
                         }
-                    } catch (e) {
-                        continue;
                     }
+                    return false;
+                });
+                
+                if (uploadAreaClicked) {
+                    console.log('Clicked upload area, waiting for file input...');
+                    await this.page.waitForTimeout(2000);
                 }
-
+                
                 // Try to find file input again
-                for (const selector of uploadSelectors) {
-                    try {
-                        uploadElement = await this.page.$(selector);
-                        if (uploadElement) break;
-                    } catch (e) {
-                        continue;
-                    }
-                }
+                uploadElement = await this.page.$('input[type="file"]');
             }
 
             if (!uploadElement) {
                 throw new Error('Could not find file upload element after clicking Photo Scan');
             }
+
+            console.log('File upload input found');
 
             // Upload all files at once
             await uploadElement.uploadFile(...filePaths);
@@ -1678,140 +1761,228 @@ class KiriEngineAutomation {
     /**
      * Wait for the model preview page to finish loading (spinner gone)
      * before attempting to interact with the fullscreen button.
+     * NOTE: This should NEVER throw - always continues even on failure
      */
-    async waitForModelViewerToLoad(timeoutMs = 15000) {
+    async waitForModelViewerToLoad(timeoutMs = 10000) {
         try {
-            console.log('Waiting for model viewer to finish loading (spinner to disappear)...');
+            console.log('Waiting for model viewer to finish loading...');
 
-            // Poll for the absence of the loading spinner SVG. The spinner uses
-            // a specific lottie <g> / <path> combination, so we detect it by
-            // characteristic attributes instead of brittle exact markup.
-            await this.page.waitForFunction(() => {
+            // Check if page is valid first
+            if (!this.page) {
+                console.log('Page not available, skipping model viewer wait');
+                return;
+            }
+
+            // Use a simple polling approach instead of waitForFunction to avoid frame issues
+            const startTime = Date.now();
+            let spinnerGone = false;
+            
+            while (Date.now() - startTime < timeoutMs && !spinnerGone) {
                 try {
-                    // Look for the distinctive circular stroke spinner
-                    const paths = Array.from(document.querySelectorAll('svg path'));
-                    const spinnerPath = paths.find(p => {
-                        const stroke = p.getAttribute('stroke') || '';
-                        const strokeWidth = p.getAttribute('stroke-width') || '';
-                        const d = p.getAttribute('d') || '';
-                        return stroke.includes('113,250,248') &&
-                            strokeWidth === '12' &&
-                            d.includes('37.5115');
+                    // Try to check for spinner
+                    spinnerGone = await this.page.evaluate(() => {
+                        try {
+                            const paths = Array.from(document.querySelectorAll('svg path'));
+                            const spinnerPath = paths.find(p => {
+                                const stroke = p.getAttribute('stroke') || '';
+                                const strokeWidth = p.getAttribute('stroke-width') || '';
+                                return stroke.includes('113,250,248') && strokeWidth === '12';
+                            });
+                            return !spinnerPath;
+                        } catch (e) {
+                            return true; // Assume loaded on error
+                        }
                     });
-
-                    // If no such path is present, we assume loading spinner is gone
-                    return !spinnerPath;
-                } catch (e) {
-                    // On any DOM error, fail open so we don't block forever
-                    return true;
+                    
+                    if (spinnerGone) {
+                        console.log('Model viewer loaded (spinner not detected)');
+                        return;
+                    }
+                } catch (evalError) {
+                    // If evaluate fails (frame issues), wait and retry
+                    console.log('Spinner check failed:', evalError.message);
                 }
-            }, { timeout: timeoutMs });
+                
+                // Wait before next check using native setTimeout
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
 
-            console.log('Model viewer appears to be loaded (spinner not detected).');
+            console.log('Model viewer wait completed (timeout or spinner gone)');
         } catch (error) {
-            // If the spinner never disappears within timeout, log and continue.
-            console.log('Timeout or error while waiting for model viewer spinner:', error.message);
+            // NEVER throw - just log and continue
+            console.log('Model viewer wait error (non-fatal):', error.message);
         }
     }
 
     /**
      * Click fullscreen button and take a screenshot of the 3D model
      * Returns the path to the saved screenshot
+     * NOTE: This is OPTIONAL - failures here should NEVER break the export process
      */
     async clickFullscreenAndTakeScreenshot() {
         try {
+            console.log('📸 Starting fullscreen screenshot sequence...');
+            
+            // CRITICAL: Check if page is in a valid state first
+            if (!this.page) {
+                console.log('⚠️ Page not available - skipping screenshot');
+                return null;
+            }
+            
+            // Check page state before ANY operation
+            try {
+                // Try a simple operation to verify page is responsive
+                const url = this.page.url();
+                console.log('Current page URL:', url);
+            } catch (urlError) {
+                console.log('⚠️ Page not responsive - skipping screenshot:', urlError.message);
+                return null;
+            }
+
+            // Wait for page to be fully stable before proceeding
+            console.log('Waiting for page to stabilize...');
+            try {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            } catch (e) {
+                // Ignore timeout errors
+            }
+
             // Ensure the 3D viewer is fully loaded before interacting
-            await this.waitForModelViewerToLoad();
+            try {
+                await this.waitForModelViewerToLoad();
+            } catch (loadError) {
+                console.log('⚠️ Model viewer load check failed:', loadError.message);
+                // Continue anyway - the model might still be viewable
+            }
 
             console.log('Looking for fullscreen button...');
 
-            // Find the fullscreen button
+            // Find the fullscreen button using safe evaluation
+            let fullscreenButton = null;
             const fullscreenButtonSelectors = [
-                'div.screenfull button[data-v-97fcb96b]',
-                'div[data-v-97fcb96b].screenfull button',
                 'div.screenfull button',
-                'button:has(svg[viewBox="0 0 26 26"])'
+                'div[data-v-97fcb96b].screenfull button',
+                '.screenfull button'
             ];
 
-            let fullscreenButton = null;
             for (const selector of fullscreenButtonSelectors) {
                 try {
                     fullscreenButton = await this.page.$(selector);
                     if (fullscreenButton) {
-                        // Verify it's the fullscreen button by checking for the SVG icon
-                        const hasFullscreenIcon = await this.page.evaluate((btn) => {
-                            const svg = btn.querySelector('svg');
-                            return svg !== null;
-                        }, fullscreenButton);
-
-                        if (hasFullscreenIcon) {
-                            console.log(`Fullscreen button found with selector: ${selector}`);
-                            break;
-                        } else {
-                            fullscreenButton = null;
-                        }
+                        console.log(`Fullscreen button found with selector: ${selector}`);
+                        break;
                     }
                 } catch (e) {
+                    console.log(`Selector ${selector} failed:`, e.message);
                     continue;
                 }
             }
 
+            // Alternative: Find by evaluating in page context (safer)
             if (!fullscreenButton) {
-                console.log('Fullscreen button not found, trying alternative search...');
-                // Try to find by looking for the screenfull div
-                const screenfullDiv = await this.page.$('div.screenfull, div[data-v-97fcb96b].screenfull');
-                if (screenfullDiv) {
-                    fullscreenButton = await screenfullDiv.$('button');
-                    if (fullscreenButton) {
-                        console.log('Fullscreen button found via screenfull div');
+                console.log('Trying alternative button search...');
+                try {
+                    fullscreenButton = await this.page.evaluateHandle(() => {
+                        const divs = document.querySelectorAll('div.screenfull, div[class*="screenfull"]');
+                        for (const div of divs) {
+                            const btn = div.querySelector('button');
+                            if (btn) return btn;
+                        }
+                        return null;
+                    });
+                    
+                    const isValid = await this.page.evaluate(el => el !== null && el.tagName === 'BUTTON', fullscreenButton);
+                    if (!isValid) fullscreenButton = null;
+                    else console.log('Fullscreen button found via alternative search');
+                } catch (e) {
+                    console.log('Alternative search failed:', e.message);
+                    fullscreenButton = null;
+                }
+            }
+
+            if (!fullscreenButton) {
+                console.log('⚠️ Fullscreen button not found - taking screenshot without fullscreen');
+            } else {
+                // Click fullscreen button
+                console.log('Clicking fullscreen button...');
+                try {
+                    await fullscreenButton.click();
+                    console.log('Fullscreen button clicked');
+                    // Wait for fullscreen transition
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } catch (clickError) {
+                    console.log('⚠️ Fullscreen click failed:', clickError.message);
+                    // Continue anyway - we can still take a screenshot
+                }
+            }
+
+            // Take screenshot (with or without fullscreen)
+            console.log('Taking screenshot...');
+
+            const timestamp = Date.now();
+            const screenshotFilename = `model_screenshot_${timestamp}.png`;
+            const extractedDir = path.resolve(__dirname, 'extracted');
+
+            // Ensure extracted directory exists
+            try {
+                await fs.ensureDir(extractedDir);
+            } catch (dirError) {
+                console.log('⚠️ Failed to create extracted directory:', dirError.message);
+                return null;
+            }
+
+            const screenshotPath = path.join(extractedDir, screenshotFilename);
+            
+            // Take screenshot with multiple retry attempts
+            let screenshotTaken = false;
+            const maxAttempts = 3;
+            
+            for (let attempt = 1; attempt <= maxAttempts && !screenshotTaken; attempt++) {
+                try {
+                    console.log(`Screenshot attempt ${attempt}/${maxAttempts}...`);
+                    
+                    // Additional wait before each attempt
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // Take the screenshot - use viewport screenshot instead of fullPage to avoid frame issues
+                    await this.page.screenshot({
+                        path: screenshotPath,
+                        fullPage: false  // CHANGED: Use viewport only to avoid "main frame too early" error
+                    });
+                    
+                    screenshotTaken = true;
+                    console.log(`✅ Screenshot saved: ${screenshotPath}`);
+                } catch (screenshotError) {
+                    console.log(`Screenshot attempt ${attempt} failed:`, screenshotError.message);
+                    
+                    // If it's the "main frame too early" error, wait longer
+                    if (screenshotError.message.includes('main frame') || 
+                        screenshotError.message.includes('too early') ||
+                        screenshotError.message.includes('detached')) {
+                        console.log('Page frame issue detected, waiting longer...');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    } else {
+                        await new Promise(resolve => setTimeout(resolve, 1500));
                     }
                 }
             }
 
-            if (fullscreenButton) {
-                console.log('Clicking fullscreen button...');
-                await fullscreenButton.click();
-
-                // Wait for fullscreen to activate
-                await this.page.waitForTimeout(1500);
-
-                console.log('Taking screenshot in fullscreen mode...');
-
-                // Generate screenshot filename with timestamp
-                const timestamp = Date.now();
-                const screenshotFilename = `model_screenshot_${timestamp}.png`;
-                const extractedDir = path.resolve(__dirname, 'extracted');
-
-                // Ensure extracted directory exists
-                await fs.ensureDir(extractedDir);
-
-                // Save screenshot to extracted directory
-                const screenshotPath = path.join(extractedDir, screenshotFilename);
-                await this.page.screenshot({
-                    path: screenshotPath,
-                    fullPage: true // Take full page screenshot
-                });
-
-                console.log(`✅ Screenshot saved: ${screenshotPath}`);
-
-                // Exit fullscreen by clicking the button again (optional, but good practice)
+            // Exit fullscreen if we entered it
+            if (fullscreenButton && screenshotTaken) {
                 try {
                     await fullscreenButton.click();
-                    await this.page.waitForTimeout(500);
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     console.log('Exited fullscreen mode');
                 } catch (e) {
-                    console.log('Could not exit fullscreen (may have exited automatically):', e.message);
+                    // Ignore - fullscreen exit is not critical
                 }
-
-                return screenshotPath;
-            } else {
-                console.log('⚠️ Fullscreen button not found - skipping screenshot');
-                return null;
             }
 
+            return screenshotTaken ? screenshotPath : null;
+
         } catch (error) {
-            console.error('Error taking screenshot:', error.message);
-            // Don't throw error - screenshot is optional
+            // CRITICAL: Catch ALL errors - screenshot is optional and should NEVER break export
+            console.error('⚠️ Screenshot sequence failed (non-fatal):', error.message);
             return null;
         }
     }
@@ -1882,14 +2053,29 @@ class KiriEngineAutomation {
                         console.log('Project appears to be ready! Attempting to click...');
                         projectReady = true;
 
-                        // Try to click the project card
+                        // Try to click the project card with proper navigation handling
                         try {
+                            // Start listening for navigation before clicking
+                            const navigationPromise = this.page.waitForNavigation({ 
+                                waitUntil: 'networkidle2', 
+                                timeout: 15000 
+                            }).catch(err => {
+                                console.log('Navigation wait after click timed out:', err.message);
+                                return null;
+                            });
+                            
                             await projectCard.click();
-                            console.log('Project card clicked - navigating to model view');
-                            await this.page.waitForTimeout(3000);
+                            console.log('Project card clicked - waiting for navigation...');
+                            
+                            // Wait for navigation to complete
+                            await navigationPromise;
+                            console.log('Navigation to model view completed');
+                            
+                            // Additional stabilization wait
+                            await this.page.waitForTimeout(2000);
                             break;
                         } catch (e) {
-                            console.log('Failed to click project card, will retry...');
+                            console.log('Failed to click project card, will retry...', e.message);
                             projectReady = false;
                         }
                     } else {
@@ -1909,17 +2095,43 @@ class KiriEngineAutomation {
                 throw new Error('Project did not complete processing within the expected time');
             }
 
-            // Wait for model view page to load
-            console.log('Waiting for model view page to load...');
-            await this.page.waitForTimeout(2000);
+            // Model view page should now be loaded (navigation was handled in click handler)
+            console.log('Verifying model view page is ready...');
+            
+            // Verify page is ready before taking screenshot - use safe timeout
+            try {
+                // Use native setTimeout instead of page.waitForTimeout to avoid frame issues
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // Try to check document ready state, but don't fail if it errors
+                try {
+                    const isReady = await this.page.evaluate(() => document.readyState === 'complete');
+                    console.log('Document ready state:', isReady ? 'complete' : 'not complete');
+                } catch (evalError) {
+                    console.log('Could not check document state:', evalError.message);
+                }
+            } catch (readyError) {
+                console.log('Page ready check failed, continuing...', readyError.message);
+            }
+            
+            // Final stabilization wait using native setTimeout
+            await new Promise(resolve => setTimeout(resolve, 2000));
 
             // Click fullscreen button and take screenshot before downloading
-            console.log('Clicking fullscreen button and taking screenshot...');
-            const screenshotPath = await this.clickFullscreenAndTakeScreenshot();
-            if (screenshotPath) {
-                console.log(`Screenshot saved to: ${screenshotPath}`);
-                // Store screenshot path for later use (to move to extracted folder)
-                this.lastScreenshotPath = screenshotPath;
+            // This is OPTIONAL - wrapped in try-catch to ensure export continues even if screenshot fails
+            console.log('Attempting fullscreen button and screenshot (optional)...');
+            let screenshotPath = null;
+            try {
+                screenshotPath = await this.clickFullscreenAndTakeScreenshot();
+                if (screenshotPath) {
+                    console.log(`Screenshot saved to: ${screenshotPath}`);
+                    this.lastScreenshotPath = screenshotPath;
+                } else {
+                    console.log('Screenshot skipped or failed (non-fatal)');
+                }
+            } catch (screenshotError) {
+                console.log('⚠️ Screenshot failed (non-fatal):', screenshotError.message);
+                // Continue with export - screenshot is optional
             }
 
             // Click the Export button
