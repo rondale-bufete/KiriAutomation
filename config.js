@@ -2,8 +2,8 @@ module.exports = {
     // ===========================================
     // KIRI ENGINE CREDENTIALS (UPDATE THESE)
     // ===========================================
-    KIRI_EMAIL: 'ophimacusarts@gmail.com',
-    KIRI_PASSWORD: 'john72004',
+    KIRI_EMAIL: 'rondale.bufete7@gmail.com',
+    KIRI_PASSWORD: 'turonron619',
 
     // ===========================================
     // SERVER CONFIGURATION
