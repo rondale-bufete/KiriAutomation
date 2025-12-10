@@ -15,7 +15,7 @@ module.exports = {
     // BROWSER CONFIGURATION (VPS-COMPATIBLE)
     // ===========================================
     BROWSER_TYPE: 'chromium', // Use chromium on Ubuntu VPS
-    BROWSER_EXECUTABLE_PATH: '/usr/bin/chromium-browser', // Use system chromium instead of Puppeteer's bundled version
+    BROWSER_EXECUTABLE_PATH: null, // Use system chromium instead of Puppeteer's bundled version
 
     // ===========================================
     // VPS UPLOAD CONFIGURATION
