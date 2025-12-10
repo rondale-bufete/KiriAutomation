@@ -705,6 +705,14 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
 
     broadcastProgress('download', '3D model download completed!', 'upload');
 
+    // Small delay to ensure download broadcast is processed
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    broadcastProgress('auto-upload', 'Auto-uploading GLB file to VPS...', 'upload');
+
+    // Small delay to ensure auto-upload broadcast is processed
+    await new Promise(resolve => setTimeout(resolve, 500));
+
     for (const uploadedFile of req.files) {
       await fs.remove(uploadedFile.path);
     }
@@ -719,6 +727,13 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
     }
 
     isProcessing = false;
+
+    // Final broadcast to mark pipeline as complete
+    broadcastProgress('complete', 'Processing completed successfully!', 'upload');
+
+    // Small delay to ensure complete broadcast is processed before clearing pipeline type
+    await new Promise(resolve => setTimeout(resolve, 500));
+
     activePipelineType = null;
 
     res.json({

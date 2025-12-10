@@ -3,7 +3,7 @@ module.exports = {
     // KIRI ENGINE CREDENTIALS (UPDATE THESE)
     // ===========================================
     KIRI_EMAIL: 'rondale.bufete7@gmail.com',
-    KIRI_PASSWORD: 'turonron619',
+    KIRI_PASSWORD: 'my password here',
 
     // ===========================================
     // SERVER CONFIGURATION
@@ -15,19 +15,19 @@ module.exports = {
     // ===========================================
     // BROWSER CONFIGURATION
     // ===========================================
-    BROWSER_TYPE: 'chrome', // Options: 'chromium', 'chrome', 'firefox', 'edge'
+    BROWSER_TYPE: 'chromium', // Options: 'chromium', 'chrome', 'firefox', 'edge'
     BROWSER_EXECUTABLE_PATH: null, // Custom browser path (optional)
 
     // ===========================================
     // VPS UPLOAD CONFIGURATION
     // ===========================================
-    VPS_BASE_URL: process.env.VPS_BASE_URL || 'https://crca-artifacts-contentmanagement.site', // Change this to your VPS domain when ready
+    VPS_BASE_URL: process.env.VPS_BASE_URL || 'http://localhost:8080', // Change this to your VPS domain when ready
     VPS_API_KEY: process.env.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system',
 
     // ===========================================
     // CI4 REMOTE UPLOAD CONFIGURATION
     // ===========================================
-    CI4_BASE_URL: process.env.CI4_BASE_URL || 'https://crca-artifacts-contentmanagement.site', // Change this to your CI4 domain when ready
+    CI4_BASE_URL: process.env.CI4_BASE_URL || 'http://localhost:8080', // Change this to your CI4 domain when ready
     CI4_API_KEY: process.env.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024', // API key for CI4 to authenticate with Node.js server
 
     // ===========================================
