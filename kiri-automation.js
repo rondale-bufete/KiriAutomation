@@ -77,9 +77,17 @@ class KiriEngineAutomation {
 
             // Configure browser launch options
             const appDownloadsDir = path.resolve(__dirname, 'downloads');
+            
+            // Set a large viewport for headless mode to avoid click issues
+            // 1920x1080 is Full HD - works well for most websites
+            const viewportConfig = this.headless ? {
+                width: 1920,
+                height: 1080
+            } : null;  // null = use browser default in non-headless mode
+            
             const launchOptions = {
                 headless: this.headless,
-                defaultViewport: null,
+                defaultViewport: viewportConfig,
                 userDataDir: this.sessionPath,
                 downloadsPath: appDownloadsDir,
                 timeout: 60000,
@@ -107,7 +115,10 @@ class KiriEngineAutomation {
                     '--allow-running-insecure-content',
                     '--disable-features=TranslateUI',
                     '--disable-features=BlinkGenPropertyTrees',
-                    `--download-dir=${appDownloadsDir}`
+                    `--download-dir=${appDownloadsDir}`,
+                    // Fullscreen/window size args for headless mode
+                    '--window-size=1920,1080',
+                    '--start-maximized'
                 ]
             };
 
@@ -2162,7 +2173,77 @@ class KiriEngineAutomation {
             }
 
             if (exportButton) {
-                await exportButton.click();
+                // Scroll element into view and click with multiple fallback strategies
+                console.log('Attempting to click Export button...');
+                let exportClicked = false;
+                
+                try {
+                    // First: Scroll into view
+                    await this.page.evaluate(el => {
+                        el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                    }, exportButton);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // Second: Try regular click
+                    try {
+                        await exportButton.click();
+                        exportClicked = true;
+                        console.log('Export button clicked (regular click)');
+                    } catch (clickError) {
+                        console.log('Regular click failed:', clickError.message);
+                        
+                        // Third: Try JavaScript click (bypasses visibility/overlay issues)
+                        try {
+                            await this.page.evaluate(el => {
+                                el.click();
+                            }, exportButton);
+                            exportClicked = true;
+                            console.log('Export button clicked (JavaScript click)');
+                        } catch (jsClickError) {
+                            console.log('JavaScript click failed:', jsClickError.message);
+                            
+                            // Fourth: Try clicking by coordinates
+                            try {
+                                const box = await exportButton.boundingBox();
+                                if (box) {
+                                    await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                                    exportClicked = true;
+                                    console.log('Export button clicked (mouse coordinates)');
+                                }
+                            } catch (mouseError) {
+                                console.log('Mouse click failed:', mouseError.message);
+                            }
+                        }
+                    }
+                } catch (scrollError) {
+                    console.log('Scroll into view failed:', scrollError.message);
+                }
+                
+                if (!exportClicked) {
+                    // Last resort: Find and click using page.evaluate
+                    console.log('Trying last resort: Find button by text and click...');
+                    try {
+                        await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button');
+                            for (const btn of buttons) {
+                                if (btn.textContent && btn.textContent.includes('Export')) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                        exportClicked = true;
+                        console.log('Export button clicked (page.evaluate fallback)');
+                    } catch (evalError) {
+                        console.log('Page.evaluate click failed:', evalError.message);
+                    }
+                }
+                
+                if (!exportClicked) {
+                    throw new Error('Failed to click Export button after all attempts');
+                }
+                
                 console.log('Export button clicked - waiting for export modal...');
 
                 // Wait for export modal to appear
@@ -2172,7 +2253,7 @@ class KiriEngineAutomation {
                     console.log('Export modal appeared');
                 } catch (e) {
                     console.log('Export modal not found with specific selector, trying alternative approach...');
-                    await this.page.waitForTimeout(3000);
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                 }
 
                 // Wait for export modal and click Download button
@@ -2277,7 +2358,77 @@ class KiriEngineAutomation {
                         }
                     });
 
-                    await downloadButton.click();
+                    // Click Download button with multiple fallback strategies (same as Export)
+                    console.log('Attempting to click Download button...');
+                    let downloadClicked = false;
+                    
+                    try {
+                        // First: Scroll into view
+                        await this.page.evaluate(el => {
+                            el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        }, downloadButton);
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // Second: Try regular click
+                        try {
+                            await downloadButton.click();
+                            downloadClicked = true;
+                            console.log('Download button clicked (regular click)');
+                        } catch (clickError) {
+                            console.log('Regular click failed:', clickError.message);
+                            
+                            // Third: Try JavaScript click
+                            try {
+                                await this.page.evaluate(el => {
+                                    el.click();
+                                }, downloadButton);
+                                downloadClicked = true;
+                                console.log('Download button clicked (JavaScript click)');
+                            } catch (jsClickError) {
+                                console.log('JavaScript click failed:', jsClickError.message);
+                                
+                                // Fourth: Try clicking by coordinates
+                                try {
+                                    const box = await downloadButton.boundingBox();
+                                    if (box) {
+                                        await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                                        downloadClicked = true;
+                                        console.log('Download button clicked (mouse coordinates)');
+                                    }
+                                } catch (mouseError) {
+                                    console.log('Mouse click failed:', mouseError.message);
+                                }
+                            }
+                        }
+                    } catch (scrollError) {
+                        console.log('Scroll into view failed:', scrollError.message);
+                    }
+                    
+                    if (!downloadClicked) {
+                        // Last resort: Find and click using page.evaluate
+                        console.log('Trying last resort: Find Download button by text and click...');
+                        try {
+                            await this.page.evaluate(() => {
+                                const buttons = document.querySelectorAll('button');
+                                for (const btn of buttons) {
+                                    if (btn.textContent && btn.textContent.trim() === 'Download') {
+                                        btn.click();
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+                            downloadClicked = true;
+                            console.log('Download button clicked (page.evaluate fallback)');
+                        } catch (evalError) {
+                            console.log('Page.evaluate click failed:', evalError.message);
+                        }
+                    }
+                    
+                    if (!downloadClicked) {
+                        throw new Error('Failed to click Download button after all attempts');
+                    }
+                    
                     console.log('Download button clicked - 3D model download started');
 
                     // Wait for download to actually complete by monitoring download events
