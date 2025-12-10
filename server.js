@@ -222,7 +222,7 @@ function updatePipelineState(step, message, explicitPipeline = null) {
       }
     }
 
-    console.log(`📊 Determined pipeline type: ${pipeline}`);
+
 
     if (stepIndex !== undefined && stepIndex >= -1) {
       const targetState = pipelineState[pipeline];
@@ -294,7 +294,6 @@ async function blynkUpdateMotor(state = 'off') {
       response = await nodeFetch(url, { method: 'GET' });
     }
 
-    console.log(`🔌 MOTOR: Blynk API response status: ${response.status}`);
 
     if (!response.ok) {
       const text = await response.text();
@@ -303,7 +302,6 @@ async function blynkUpdateMotor(state = 'off') {
     }
 
     const text = await response.text();
-    console.log(`🔌 MOTOR: Blynk API success! Response: ${text}`);
     return { success: true, httpCode: response.status, response: text };
   } catch (error) {
     console.error('🔌 MOTOR: Blynk update error:', error.message);
@@ -687,7 +685,6 @@ app.post('/upload', upload.array('files', 150), async (req, res) => {
 
     broadcastProgress('processing', 'Processing photogrammetry with multiple images...', 'upload');
 
-    console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step...');
     await blynkUpdateMotor('off');
 
     const exportResult = await automation.waitForProjectCompletionAndExport();
@@ -781,7 +778,7 @@ const motorControlHandler = async (req, res) => {
     const { state } = req.params;
     const normalized = String(state || 'off').toLowerCase() === 'on' ? 'on' : 'off';
 
-    console.log(`🔌 MOTOR API: Received motor control request (${req.method}) for state: ${normalized}`);
+    // console.log(`🔌 MOTOR API: Received motor control request (${req.method}) for state: ${normalized}`);
 
     const updateResult = await blynkUpdateMotor(normalized);
 
@@ -1183,10 +1180,7 @@ app.get('/api/pipeline/active-status', (req, res) => {
   const scanState = pipelineState.scan;
   const uploadState = pipelineState.upload;
 
-  console.log(`📊 /api/pipeline/active-status called`);
-  console.log(`📊 Current scan state:`, scanState);
-  console.log(`📊 Current upload state:`, uploadState);
-  console.log(`📊 Active pipeline type:`, activePipelineType);
+
 
   const scanStatusMap = {
     0: 'authenticating',
@@ -1236,7 +1230,7 @@ app.get('/api/pipeline/active-status', (req, res) => {
     }
   };
 
-  console.log(`📊 Response:`, response);
+
   res.json(response);
 });
 
@@ -1454,7 +1448,7 @@ app.post('/api/remote/start-automated-scanning', async (req, res) => {
 
         broadcastProgress('upload', 'Capturing photos with turntable rotation...', 'scan');
 
-        console.log('🔌 MOTOR: Turning ON motor - Starting Capturing Artifact phase');
+        // console.log('🔌 MOTOR: Turning ON motor - Starting Capturing Artifact phase');
         try {
           await blynkUpdateMotor('on');
           console.log('🔌 MOTOR: Motor turned ON successfully');
@@ -1769,7 +1763,7 @@ class CI4UploadWatcher {
 
       broadcastProgress('processing', 'Processing photogrammetry with multiple images...', 'upload');
 
-      console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step...');
+      // console.log('🔌 MOTOR: Turning OFF motor for Processing Photogrammetry step...');
       await blynkUpdateMotor('off');
 
       const exportResult = await automation.waitForProjectCompletionAndExport();
