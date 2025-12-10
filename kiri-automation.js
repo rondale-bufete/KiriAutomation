@@ -1,4 +1,4 @@
-//kiri-automation.js
+//kiri-automation.js - PART 1 (Lines 1-90)
 
 const puppeteer = require('puppeteer');
 const fs = require('fs-extra');
@@ -9,58 +9,53 @@ class KiriEngineAutomation {
         this.browser = null;
         this.page = null;
         this.isLoggedIn = false;
-        this.isLoggingIn = false; // Flag to prevent multiple login attempts
-        this.buttonClicked = false; // Flag to prevent multiple button clicks
+        this.isLoggingIn = false;
+        this.buttonClicked = false;
         this.sessionPath = options.sessionPath || './session';
         this.headless = options.headless || false;
         this.timeout = options.timeout || 30000;
-        this.browserType = options.browserType || 'chromium'; // chromium, chrome, firefox, edge
+        this.browserType = options.browserType || 'chromium';
         this.executablePath = options.executablePath || null;
-        this.reloadInterval = null; // For the 5-second page reload cycle
-        this.isReloading = false; // Flag to prevent multiple simultaneous reloads
-        this.trackedProjectId = null;     // Store project ID we're monitoring
-        this.trackedProjectTitle = null;  // Store project title we're monitoring
+        this.reloadInterval = null;
+        this.isReloading = false;
+        this.trackedProjectId = null;
+        this.trackedProjectTitle = null;
     }
 
+    // FIXED detectBrowserPath - Only checks Linux paths
     detectBrowserPath(browserType) {
         const os = require('os');
         const fs = require('fs');
-        const path = require('path');
         const platform = os.platform();
-        const username = os.userInfo().username;
 
         const browserPaths = {
             chrome: {
-                windows: [
-                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                    `C:\\Users\\${username}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe`
-                ]
-            },
-            edge: {
-                windows: [
-                    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-                    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-                    `C:\\Users\\${username}\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe`
+                linux: [
+                    '/usr/bin/google-chrome',
+                    '/usr/bin/google-chrome-stable',
+                    '/usr/bin/chromium-browser',
+                    '/snap/bin/chromium'
                 ]
             },
             chromium: {
-                windows: [
-                    'C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe',
-                    'C:\\Program Files\\Chromium\\Application\\chrome.exe',
-                    `C:\\Users\\${username}\\AppData\\Local\\Chromium\\Application\\chrome.exe`
+                linux: [
+                    '/usr/bin/chromium-browser',
+                    '/usr/bin/chromium',
+                    '/snap/bin/chromium'
                 ]
             }
         };
 
-        if (platform === 'win32' && browserPaths[browserType] && browserPaths[browserType].windows) {
-            for (const browserPath of browserPaths[browserType].windows) {
+        if (platform === 'linux' && browserPaths[browserType] && browserPaths[browserType].linux) {
+            for (const browserPath of browserPaths[browserType].linux) {
                 if (fs.existsSync(browserPath)) {
+                    console.log(`Found ${browserType} at: ${browserPath}`);
                     return browserPath;
                 }
             }
         }
 
+        console.log(`No ${browserType} browser found for platform: ${platform}`);
         return null;
     }
 
@@ -80,7 +75,7 @@ class KiriEngineAutomation {
 
             console.log('Launching new browser instance...');
 
-            // Configure browser launch options based on browser type
+            // Configure browser launch options
             const appDownloadsDir = path.resolve(__dirname, 'downloads');
             const launchOptions = {
                 headless: this.headless,
@@ -116,117 +111,44 @@ class KiriEngineAutomation {
                 ]
             };
 
-            // Add browser-specific configurations
-            if (this.browserType === 'chrome' || this.browserType === 'edge') {
-                // Use system Chrome or Edge
-                if (this.executablePath) {
-                    launchOptions.executablePath = this.executablePath;
-                } else {
-                    // Auto-detect browser paths with fallback
-                    const detectedPath = this.detectBrowserPath(this.browserType);
-                    if (detectedPath) {
-                        launchOptions.executablePath = detectedPath;
-                        console.log(`Using detected browser: ${detectedPath}`);
-                    } else {
-                        console.log(`Warning: Could not detect ${this.browserType} browser path, using default Puppeteer browser`);
+            // ============================================
+            // FIXED: Direct browser detection for Linux
+            // ============================================
+            const os = require('os');
+            const platform = os.platform();
+
+            if (this.executablePath) {
+                launchOptions.executablePath = this.executablePath;
+                console.log(`Using configured browser: ${this.executablePath}`);
+            } else if (platform === 'linux') {
+                // Force chromium-browser on Linux
+                const linuxChromiumPaths = [
+                    '/usr/bin/chromium-browser',
+                    '/usr/bin/chromium',
+                    '/snap/bin/chromium',
+                    '/usr/bin/google-chrome',
+                    '/usr/bin/google-chrome-stable'
+                ];
+
+                for (const browserPath of linuxChromiumPaths) {
+                    if (fs.existsSync(browserPath)) {
+                        launchOptions.executablePath = browserPath;
+                        console.log(`Found and using browser: ${browserPath}`);
+                        break;
                     }
                 }
 
-                // Chrome/Edge specific args
-                launchOptions.args = [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    // Download-specific optimizations
-                    '--disable-download-protection',
-                    '--disable-extensions',
-                    '--disable-plugins',
-                    '--disable-default-apps',
-                    '--disable-background-networking',
-                    '--disable-sync',
-                    '--disable-translate',
-                    '--disable-ipc-flooding-protection',
-                    '--allow-running-insecure-content',
-                    '--disable-features=TranslateUI',
-                    '--disable-features=BlinkGenPropertyTrees',
-                    // Set download directory
-                    `--download-dir=${appDownloadsDir}`
-                ];
-            } else if (this.browserType === 'firefox') {
-                // Firefox specific configuration
-                launchOptions.product = 'firefox';
-                launchOptions.args = [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox'
-                ];
-            } else {
-                // Default Chromium configuration
-                launchOptions.args = [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    // Set download directory
-                    `--download-dir=${appDownloadsDir}`
-                ];
-            }
-
-            // Try to launch browser with fallback mechanism
-            let browserLaunched = false;
-            const fallbackBrowsers = ['chromium', 'chrome', 'edge'];
-            let currentBrowserType = this.browserType;
-
-            for (let i = 0; i < fallbackBrowsers.length && !browserLaunched; i++) {
-                try {
-                    console.log(`Attempting to launch ${currentBrowserType} browser...`);
-                    console.log(`Download directory set to: ${appDownloadsDir}`);
-
-                    // Update browser type for this attempt
-                    if (currentBrowserType !== this.browserType) {
-                        const detectedPath = this.detectBrowserPath(currentBrowserType);
-                        if (detectedPath) {
-                            launchOptions.executablePath = detectedPath;
-                            console.log(`Using fallback browser: ${detectedPath}`);
-                        } else {
-                            console.log(`Skipping ${currentBrowserType} - not found`);
-                            continue;
-                        }
-                    }
-
-                    this.browser = await puppeteer.launch(launchOptions);
-                    console.log(`${currentBrowserType} browser launched successfully`);
-                    browserLaunched = true;
-                    this.browserType = currentBrowserType; // Update the actual browser type used
-
-                } catch (error) {
-                    console.log(`Failed to launch ${currentBrowserType}: ${error.message}`);
-                    if (i < fallbackBrowsers.length - 1) {
-                        currentBrowserType = fallbackBrowsers[i + 1];
-                        console.log(`Trying fallback browser: ${currentBrowserType}`);
-                    }
+                if (!launchOptions.executablePath) {
+                    throw new Error('No Chromium/Chrome browser found on Linux. Please install: sudo apt install chromium-browser');
                 }
             }
 
-            if (!browserLaunched) {
-                throw new Error('Failed to launch any browser. Please ensure Chrome, Edge, or Chromium is installed.');
-            }
+            console.log(`Launching browser...`);
+            console.log(`Download directory set to: ${appDownloadsDir}`);
+
+            // Launch the browser
+            this.browser = await puppeteer.launch(launchOptions);
+            console.log(`Browser launched successfully`);
 
             console.log('Creating new page...');
             this.page = await this.browser.newPage();
@@ -267,9 +189,6 @@ class KiriEngineAutomation {
                     }
                 }
             });
-
-            // Set viewport
-            // await this.page.setViewport({ width: 1755, height: 1080 });
 
             return true;
         } catch (error) {
