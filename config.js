@@ -3,32 +3,36 @@ module.exports = {
     // KIRI ENGINE CREDENTIALS (UPDATE THESE)
     // ===========================================
     KIRI_EMAIL: 'rondale.bufete7@gmail.com',
-    KIRI_PASSWORD: 'my password here',
+    KIRI_PASSWORD: 'turonron619',
 
     // ===========================================
     // SERVER CONFIGURATION
     // ===========================================
     PORT: 3002,
-    // NODE_ENV: 'development', // Development kung gusto naka open chrome ng automation
-    NODE_ENV: 'production', // Production kung gusto naka close chrome ng automation
+    NODE_ENV: 'production', // MUST be production on VPS (headless mode)
 
     // ===========================================
-    // BROWSER CONFIGURATION
+    // BROWSER CONFIGURATION (VPS-COMPATIBLE)
     // ===========================================
-    BROWSER_TYPE: 'chromium', // Options: 'chromium', 'chrome', 'firefox', 'edge'
-    BROWSER_EXECUTABLE_PATH: null, // Custom browser path (optional)
+    BROWSER_TYPE: 'chromium', // Use chromium on Ubuntu VPS
+    BROWSER_EXECUTABLE_PATH: '/usr/bin/chromium-browser', // Explicit path for VPS
 
     // ===========================================
     // VPS UPLOAD CONFIGURATION
     // ===========================================
-    VPS_BASE_URL: process.env.VPS_BASE_URL || 'http://localhost:8080', // Change this to your VPS domain when ready
+    VPS_BASE_URL: process.env.VPS_BASE_URL || 'https://crca-artifacts-contentmanagement.site', // FIXED: Use your actual domain
     VPS_API_KEY: process.env.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system',
 
     // ===========================================
     // CI4 REMOTE UPLOAD CONFIGURATION
     // ===========================================
-    CI4_BASE_URL: process.env.CI4_BASE_URL || 'http://localhost:8080', // Change this to your CI4 domain when ready
-    CI4_API_KEY: process.env.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024', // API key for CI4 to authenticate with Node.js server
+    CI4_BASE_URL: process.env.CI4_BASE_URL || 'https://crca-artifacts-contentmanagement.site', // FIXED: Use your actual domain
+    CI4_API_KEY: process.env.CI4_API_KEY || 'kiri-automation-ci4-secret-key-2024',
+
+    // ===========================================
+    // WEBHOOK CONFIGURATION (FOR MACRO TRIGGER)
+    // ===========================================
+    WEBHOOK_URL: process.env.WEBHOOK_URL || 'http://localhost:3003/trigger-macro', // Add if you need macro integration
 
     // ===========================================
     // BROWSER PATHS (AUTO-DETECTION)
@@ -50,7 +54,6 @@ module.exports = {
                 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
                 'C:\\Users\\%USERNAME%\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe'
             ]
-
         },
         chromium: {
             windows: [
@@ -59,8 +62,8 @@ module.exports = {
                 'C:\\Users\\%USERNAME%\\AppData\\Local\\Chromium\\Application\\chrome.exe'
             ],
             mac: '/Applications/Chromium.app/Contents/MacOS/Chromium',
-            linux: '/usr/bin/chromium',
-            ubuntu: '/usr/bin/chromium'
+            linux: '/usr/bin/chromium-browser', // FIXED: Ubuntu uses chromium-browser
+            ubuntu: '/usr/bin/chromium-browser' // FIXED: Ubuntu uses chromium-browser
         },
         firefox: {
             windows: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
@@ -79,6 +82,6 @@ module.exports = {
             mac: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
             linux: '/usr/bin/brave-browser',
             ubuntu: '/usr/bin/brave-browser'
-        },
+        }
     }
 };
