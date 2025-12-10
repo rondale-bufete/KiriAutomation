@@ -58,17 +58,40 @@ class ZipExtractor {
     startWatching() {
         console.log('📦 Starting to watch downloads directory for zip files...');
 
-        this.watcher = fs.watch(this.downloadsDir, (eventType, filename) => {
-            if (eventType === 'rename' && filename && filename.endsWith('.zip')) {
-                const filePath = path.join(this.downloadsDir, filename);
+        try {
+            this.watcher = fs.watch(this.downloadsDir, (eventType, filename) => {
+                if (eventType === 'rename' && filename && filename.endsWith('.zip')) {
+                    const filePath = path.join(this.downloadsDir, filename);
 
-                // Check if file exists and is not being processed
-                if (fs.existsSync(filePath) && !this.processingFiles.has(filename)) {
-                    console.log('📦 New zip file detected:', filename);
-                    this.processZipFile(filePath, filename);
+                    // Check if file exists and is not being processed
+                    if (fs.existsSync(filePath) && !this.processingFiles.has(filename)) {
+                        console.log('📦 New zip file detected:', filename);
+                        this.processZipFile(filePath, filename);
+                    }
                 }
-            }
-        });
+            });
+
+            // Add error handler to prevent crashes
+            this.watcher.on('error', (error) => {
+                console.error('📦 Downloads watcher error:', error.message);
+                // Don't crash - just log and try to restart watcher
+                if (error.code !== 'EPERM') {
+                    console.log('📦 Attempting to restart downloads watcher...');
+                    setTimeout(() => {
+                        try {
+                            if (this.watcher) {
+                                this.watcher.close();
+                            }
+                            this.startWatching();
+                        } catch (restartErr) {
+                            console.error('📦 Failed to restart downloads watcher:', restartErr.message);
+                        }
+                    }, 2000);
+                }
+            });
+        } catch (watchError) {
+            console.error('📦 Failed to start downloads watcher:', watchError.message);
+        }
 
         // Also check for existing zip files on startup
         this.checkExistingZipFiles();
@@ -84,41 +107,84 @@ class ZipExtractor {
     startWatchingExtractedFolder() {
         console.log('📦 Starting to watch extracted folder for new files/folders...');
 
-        this.extractedWatcher = fs.watch(this.extractedDir, async (eventType, filename) => {
-            if (eventType === 'rename' && filename) {
-                const folderPath = path.join(this.extractedDir, filename);
+        try {
+            this.extractedWatcher = fs.watch(this.extractedDir, async (eventType, filename) => {
+                if (eventType === 'rename' && filename) {
+                    const folderPath = path.join(this.extractedDir, filename);
 
-                // Wait a moment for the folder to be fully created
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                    // Wait a moment for the folder to be fully created
+                    await new Promise(resolve => setTimeout(resolve, 1000));
 
-                try {
-                    if (fs.existsSync(folderPath)) {
-                        const stats = await fs.stat(folderPath);
+                    try {
+                        if (fs.existsSync(folderPath)) {
+                            const stats = await fs.stat(folderPath);
 
-                        // Check if it's a directory (new extracted folder)
-                        if (stats.isDirectory() && !this.knownExtractedFolders.has(filename)) {
-                            console.log('📦 New extracted folder detected:', filename);
-                            this.knownExtractedFolders.add(filename);
+                            // Check if it's a directory (new extracted folder)
+                            if (stats.isDirectory() && !this.knownExtractedFolders.has(filename)) {
+                                console.log('📦 New extracted folder detected:', filename);
+                                this.knownExtractedFolders.add(filename);
 
-                            // Check if folder has content (GLB files, etc.)
-                            const folderContents = await fs.readdir(folderPath);
-                            if (folderContents.length > 0) {
-                                console.log('📦 New folder has content, emitting completion event...');
-                                this.emitExtractionComplete(filename, folderPath);
+                                // Check if folder has content (GLB files, etc.)
+                                const folderContents = await fs.readdir(folderPath);
+                                if (folderContents.length > 0) {
+                                    console.log('📦 New folder has content, emitting completion event...');
+                                    this.emitExtractionComplete(filename, folderPath);
+                                }
+                            }
+                            // Check if it's a file (like screenshot)
+                            else if (stats.isFile() && filename.endsWith('.png')) {
+                                console.log('📦 New screenshot file detected:', filename);
+                                // Screenshot is usually added after extraction, so check for recent folders
+                                this.checkForRecentExtraction();
                             }
                         }
-                        // Check if it's a file (like screenshot)
-                        else if (stats.isFile() && filename.endsWith('.png')) {
-                            console.log('📦 New screenshot file detected:', filename);
-                            // Screenshot is usually added after extraction, so check for recent folders
-                            this.checkForRecentExtraction();
-                        }
+                    } catch (error) {
+                        console.error('📦 Error checking new extracted item:', error);
                     }
-                } catch (error) {
-                    console.error('📦 Error checking new extracted item:', error);
                 }
-            }
-        });
+            });
+
+            // CRITICAL: Add error handler to prevent crashes when folder is deleted
+            this.extractedWatcher.on('error', (error) => {
+                // EPERM errors happen when folder is deleted - this is expected, don't crash
+                if (error.code === 'EPERM' || error.code === 'ENOENT') {
+                    console.log('📦 Extracted folder watcher stopped (folder deleted or permission issue) - this is normal after cleanup');
+                    // Try to restart watcher if directory still exists
+                    setTimeout(() => {
+                        try {
+                            if (fs.existsSync(this.extractedDir)) {
+                                console.log('📦 Restarting extracted folder watcher...');
+                                if (this.extractedWatcher) {
+                                    this.extractedWatcher.close();
+                                }
+                                this.startWatchingExtractedFolder();
+                            } else {
+                                console.log('📦 Extracted directory does not exist, will restart when it is recreated');
+                            }
+                        } catch (restartErr) {
+                            console.error('📦 Failed to restart extracted folder watcher:', restartErr.message);
+                        }
+                    }, 2000);
+                } else {
+                    console.error('📦 Extracted folder watcher error:', error.message);
+                    // For other errors, try to restart
+                    setTimeout(() => {
+                        try {
+                            if (this.extractedWatcher) {
+                                this.extractedWatcher.close();
+                            }
+                            if (fs.existsSync(this.extractedDir)) {
+                                this.startWatchingExtractedFolder();
+                            }
+                        } catch (restartErr) {
+                            console.error('📦 Failed to restart extracted folder watcher:', restartErr.message);
+                        }
+                    }, 2000);
+                }
+            });
+        } catch (watchError) {
+            console.error('📦 Failed to start extracted folder watcher:', watchError.message);
+        }
     }
 
     /**

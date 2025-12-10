@@ -34,12 +34,24 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Ensure required directories exist
+// Ensure required directories exist (cross-platform)
 const downloadsDir = path.join(__dirname, 'downloads');
 fs.ensureDirSync(downloadsDir);
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.ensureDirSync(uploadsDir);
+
+const extractedDir = path.join(__dirname, 'extracted');
+fs.ensureDirSync(extractedDir);
+
+const sessionDir = path.join(__dirname, 'session');
+fs.ensureDirSync(sessionDir);
+
+console.log('✅ Required directories created/verified:');
+console.log('  - Downloads:', downloadsDir);
+console.log('  - Uploads:', uploadsDir);
+console.log('  - Extracted:', extractedDir);
+console.log('  - Session:', sessionDir);
 
 // Serve static files
 app.use('/downloads', express.static('downloads'));
@@ -273,6 +285,7 @@ function updatePipelineState(step, message, explicitPipeline = null) {
 /**
  * Clean up extracted folder - removes all files and folders
  * This should be called after successful VPS upload
+ * NOTE: Does NOT delete the extracted folder itself, only its contents
  */
 async function cleanupExtractedFolder() {
   try {
@@ -285,11 +298,32 @@ async function cleanupExtractedFolder() {
       return;
     }
     
+    // Temporarily stop the watcher to avoid EPERM errors
+    try {
+      if (global.zipExtractor && global.zipExtractor.extractedWatcher) {
+        console.log('📦 Temporarily stopping extracted folder watcher for cleanup...');
+        global.zipExtractor.extractedWatcher.close();
+        global.zipExtractor.extractedWatcher = null;
+      }
+    } catch (watcherErr) {
+      console.log('⚠️ Could not stop watcher:', watcherErr.message);
+    }
+    
     // Get all items in extracted folder
     const items = await fs.readdir(extractedDir);
     
     if (items.length === 0) {
       console.log('ℹ️ Extracted folder is already empty');
+      // Restart watcher
+      if (global.zipExtractor) {
+        setTimeout(() => {
+          try {
+            global.zipExtractor.startWatchingExtractedFolder();
+          } catch (e) {
+            console.log('⚠️ Could not restart watcher:', e.message);
+          }
+        }, 1000);
+      }
       return;
     }
     
@@ -310,9 +344,32 @@ async function cleanupExtractedFolder() {
     if (cleanedCount > 0) {
       console.log(`✅ Extracted folder cleanup completed (${cleanedCount} item(s) removed)`);
     }
+    
+    // Restart watcher after cleanup
+    if (global.zipExtractor) {
+      setTimeout(() => {
+        try {
+          console.log('📦 Restarting extracted folder watcher after cleanup...');
+          global.zipExtractor.startWatchingExtractedFolder();
+        } catch (restartErr) {
+          console.error('❌ Failed to restart extracted folder watcher:', restartErr.message);
+        }
+      }, 1000);
+    }
   } catch (cleanupError) {
     console.error('❌ Error cleaning up extracted folder:', cleanupError.message);
     // Don't throw - cleanup failures shouldn't break the pipeline
+    
+    // Try to restart watcher even on error
+    if (global.zipExtractor) {
+      setTimeout(() => {
+        try {
+          global.zipExtractor.startWatchingExtractedFolder();
+        } catch (e) {
+          console.log('⚠️ Could not restart watcher after error:', e.message);
+        }
+      }, 2000);
+    }
   }
 }
 
@@ -2223,6 +2280,9 @@ const ZipExtractor = require('./zip-extractor');
 const zipExtractor = new ZipExtractor();
 zipExtractor.startWatching();
 
+// Make zipExtractor globally available for kiri-automation.js
+global.zipExtractor = zipExtractor;
+
 // === INITIALIZE CI4 UPLOAD WATCHER ===
 
 const ci4UploadWatcher = new CI4UploadWatcher();
@@ -2257,16 +2317,18 @@ io.on('connection', (socket) => {
   socket.on('glb-uploaded', async (data) => {
     console.log('📦 GLB FILE UPLOADED EVENT RECEIVED:', data);
 
-    if (activePipelineType === 'upload') {
-      console.log('📦 Updating pipeline: Marking download as complete and moving to auto-upload completion');
+    // Handle both 'upload' and 'scan' pipeline types
+    if (activePipelineType === 'upload' || activePipelineType === 'scan') {
+      const pipelineType = activePipelineType;
+      console.log(`📦 Updating ${pipelineType} pipeline: Marking download as complete and moving to auto-upload completion`);
 
       // Mark download step as completed
-      updatePipelineState('download', 'GLB file downloaded and uploaded to VPS', 'upload');
+      updatePipelineState('download', 'GLB file downloaded and uploaded to VPS', pipelineType);
 
       // Small delay
       setTimeout(async () => {
         // Mark auto-upload as completed
-        updatePipelineState('auto-upload', `GLB file uploaded successfully: ${data.filename || '3DModel.glb'}`, 'upload');
+        updatePipelineState('auto-upload', `GLB file uploaded successfully: ${data.filename || '3DModel.glb'}`, pipelineType);
 
         // Clean up extracted folder after successful VPS upload
         await cleanupExtractedFolder();
@@ -2274,11 +2336,13 @@ io.on('connection', (socket) => {
         // Small delay
         setTimeout(() => {
           // Mark entire pipeline as complete
-          updatePipelineState('complete', 'Processing completed successfully!', 'upload');
+          updatePipelineState('complete', 'Processing completed successfully!', pipelineType);
           activePipelineType = null;
-          console.log('✅ Pipeline marked as COMPLETE via GLB upload event');
+          console.log(`✅ ${pipelineType.toUpperCase()} Pipeline marked as COMPLETE via GLB upload event`);
         }, 500);
       }, 500);
+    } else {
+      console.log('⚠️ GLB uploaded but no active pipeline (upload or scan) - skipping pipeline update');
     }
   });
 

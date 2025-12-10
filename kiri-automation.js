@@ -180,7 +180,8 @@ class KiriEngineAutomation {
             await this.page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 });
 
             // Set user agent to avoid detection
-            await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+            // Use generic user agent that works on all platforms
+            await this.page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
             // Set longer timeouts for network issues
             this.page.setDefaultTimeout(60000);
@@ -844,14 +845,65 @@ class KiriEngineAutomation {
                 if (!isChecked) {
                     console.log('Auto Object Masking is disabled, enabling now...');
                     const switchTarget = await autoMaskSwitch.$('.switch__core') || autoMaskSwitch;
-                    try {
-                        await switchTarget.click();
-                    } catch (clickError) {
-                        console.log('Primary click failed, trying alternative click for Auto Object Masking...', clickError.message);
-                        await autoMaskSwitch.click();
+                    let switchEnabled = false;
+                    
+                    const clickMethods = [
+                        async () => {
+                            await switchTarget.click({ delay: 100 });
+                            return true;
+                        },
+                        async () => {
+                            await autoMaskSwitch.click({ delay: 100 });
+                            return true;
+                        },
+                        async () => {
+                            await this.page.evaluate(el => {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                el.click();
+                            }, switchTarget);
+                            return true;
+                        },
+                        async () => {
+                            const box = await switchTarget.boundingBox();
+                            if (!box) throw new Error('Could not get bounding box');
+                            const x = box.x + box.width / 2;
+                            const y = box.y + box.height / 2;
+                            await this.page.mouse.move(x, y, { steps: 5 });
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            await this.page.mouse.click(x, y, { delay: 50 });
+                            return true;
+                        }
+                    ];
+                    
+                    for (let i = 0; i < clickMethods.length && !switchEnabled; i++) {
+                        try {
+                            await clickMethods[i]();
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // Verify switch is enabled
+                            const nowChecked = await autoMaskSwitch.evaluate(el => {
+                                const input = el.querySelector('input[type="checkbox"]');
+                                if (input) return input.checked;
+                                return el.classList.contains('is-checked') || el.classList.contains('switch--checked');
+                            });
+                            
+                            if (nowChecked) {
+                                switchEnabled = true;
+                                console.log('✅ Auto Object Masking enabled successfully!');
+                                break;
+                            }
+                        } catch (methodErr) {
+                            if (i < clickMethods.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                            }
+                        }
                     }
+                    
+                    if (!switchEnabled) {
+                        console.log('⚠️ Auto Object Masking switch clicked but may not be enabled - proceeding anyway');
+                    }
+                    
                     await this.page.waitForTimeout(800);
-                    console.log('Auto Object Masking enabled');
                 } else {
                     console.log('Auto Object Masking already enabled');
                 }
@@ -931,8 +983,89 @@ class KiriEngineAutomation {
                 }
 
                 if (glbOption) {
-                    await glbOption.click();
-                    console.log('GLB format selected');
+                    // Use robust click method for headless mode
+                    console.log('Clicking GLB option (headless-safe method)...');
+                    let glbSelected = false;
+                    
+                    const clickMethods = [
+                        async () => {
+                            // Method 1: Regular click
+                            await glbOption.click({ delay: 100 });
+                            return true;
+                        },
+                        async () => {
+                            // Method 2: JavaScript click
+                            await this.page.evaluate(el => {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                el.click();
+                            }, glbOption);
+                            return true;
+                        },
+                        async () => {
+                            // Method 3: Mouse coordinates (most reliable for headless)
+                            const box = await glbOption.boundingBox();
+                            if (!box) throw new Error('Could not get bounding box');
+                            const x = box.x + box.width / 2;
+                            const y = box.y + box.height / 2;
+                            await this.page.mouse.move(x, y, { steps: 5 });
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            await this.page.mouse.click(x, y, { delay: 50 });
+                            return true;
+                        },
+                        async () => {
+                            // Method 4: Direct event dispatch
+                            await this.page.evaluate(el => {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                const clickEvent = new MouseEvent('click', {
+                                    view: window,
+                                    bubbles: true,
+                                    cancelable: true
+                                });
+                                el.dispatchEvent(clickEvent);
+                            }, glbOption);
+                            return true;
+                        }
+                    ];
+                    
+                    for (let i = 0; i < clickMethods.length && !glbSelected; i++) {
+                        try {
+                            await clickMethods[i]();
+                            console.log(`✅ GLB option click method ${i + 1} executed`);
+                            
+                            // Wait and verify GLB was selected
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // Check if GLB is selected by checking dropdown text
+                            const isGLBSelected = await this.page.evaluate(() => {
+                                const dropdowns = document.querySelectorAll('.k-input.k-select');
+                                for (const dropdown of dropdowns) {
+                                    const text = dropdown.textContent || '';
+                                    if (text.includes('GLB') || text.includes('glb')) {
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+                            
+                            if (isGLBSelected) {
+                                glbSelected = true;
+                                console.log('✅ GLB format selected successfully!');
+                                break;
+                            } else {
+                                console.log(`⚠️ Click method ${i + 1} executed but GLB not selected, trying next...`);
+                            }
+                        } catch (methodErr) {
+                            console.log(`⚠️ GLB click method ${i + 1} failed:`, methodErr.message);
+                            if (i < clickMethods.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                            }
+                        }
+                    }
+                    
+                    if (!glbSelected) {
+                        console.log('⚠️ GLB option clicked but may not have been selected - proceeding anyway');
+                    }
+                    
                     await this.page.waitForTimeout(800);
                 } else {
                     console.log('GLB option not found in updated dropdown');
@@ -1013,8 +1146,89 @@ class KiriEngineAutomation {
                 }
 
                 if (fourKOption) {
-                    await fourKOption.click();
-                    console.log('4K texture resolution selected');
+                    // Use robust click method for headless mode
+                    console.log('Clicking 4K option (headless-safe method)...');
+                    let fourKSelected = false;
+                    
+                    const clickMethods = [
+                        async () => {
+                            // Method 1: Regular click
+                            await fourKOption.click({ delay: 100 });
+                            return true;
+                        },
+                        async () => {
+                            // Method 2: JavaScript click
+                            await this.page.evaluate(el => {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                el.click();
+                            }, fourKOption);
+                            return true;
+                        },
+                        async () => {
+                            // Method 3: Mouse coordinates (most reliable for headless)
+                            const box = await fourKOption.boundingBox();
+                            if (!box) throw new Error('Could not get bounding box');
+                            const x = box.x + box.width / 2;
+                            const y = box.y + box.height / 2;
+                            await this.page.mouse.move(x, y, { steps: 5 });
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            await this.page.mouse.click(x, y, { delay: 50 });
+                            return true;
+                        },
+                        async () => {
+                            // Method 4: Direct event dispatch
+                            await this.page.evaluate(el => {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                const clickEvent = new MouseEvent('click', {
+                                    view: window,
+                                    bubbles: true,
+                                    cancelable: true
+                                });
+                                el.dispatchEvent(clickEvent);
+                            }, fourKOption);
+                            return true;
+                        }
+                    ];
+                    
+                    for (let i = 0; i < clickMethods.length && !fourKSelected; i++) {
+                        try {
+                            await clickMethods[i]();
+                            console.log(`✅ 4K option click method ${i + 1} executed`);
+                            
+                            // Wait and verify 4K was selected
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // Check if 4K is selected by checking dropdown text
+                            const is4KSelected = await this.page.evaluate(() => {
+                                const dropdowns = document.querySelectorAll('.k-input.k-select');
+                                for (const dropdown of dropdowns) {
+                                    const text = dropdown.textContent || '';
+                                    if (text.includes('4K')) {
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+                            
+                            if (is4KSelected) {
+                                fourKSelected = true;
+                                console.log('✅ 4K texture resolution selected successfully!');
+                                break;
+                            } else {
+                                console.log(`⚠️ Click method ${i + 1} executed but 4K not selected, trying next...`);
+                            }
+                        } catch (methodErr) {
+                            console.log(`⚠️ 4K click method ${i + 1} failed:`, methodErr.message);
+                            if (i < clickMethods.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                            }
+                        }
+                    }
+                    
+                    if (!fourKSelected) {
+                        console.log('⚠️ 4K option clicked but may not have been selected - proceeding anyway');
+                    }
+                    
                     await this.page.waitForTimeout(800);
                 } else {
                     console.log('4K option not found in texture dropdown');
@@ -1090,7 +1304,52 @@ class KiriEngineAutomation {
             }
 
             if (createButton) {
-                await createButton.click();
+                // Use robust click method for headless mode
+                console.log('Clicking Create button (headless-safe method)...');
+                let createClicked = false;
+                
+                const clickMethods = [
+                    async () => {
+                        await createButton.click({ delay: 100 });
+                        return true;
+                    },
+                    async () => {
+                        await this.page.evaluate(el => {
+                            el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            el.click();
+                        }, createButton);
+                        return true;
+                    },
+                    async () => {
+                        const box = await createButton.boundingBox();
+                        if (!box) throw new Error('Could not get bounding box');
+                        const x = box.x + box.width / 2;
+                        const y = box.y + box.height / 2;
+                        await this.page.mouse.move(x, y, { steps: 5 });
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        await this.page.mouse.click(x, y, { delay: 50 });
+                        return true;
+                    }
+                ];
+                
+                for (let i = 0; i < clickMethods.length && !createClicked; i++) {
+                    try {
+                        await clickMethods[i]();
+                        createClicked = true;
+                        console.log(`✅ Create button clicked successfully (method ${i + 1})`);
+                        break;
+                    } catch (methodErr) {
+                        console.log(`⚠️ Create button click method ${i + 1} failed:`, methodErr.message);
+                        if (i < clickMethods.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                        }
+                    }
+                }
+                
+                if (!createClicked) {
+                    throw new Error('Failed to click Create button after all attempts');
+                }
+                
                 console.log('Create 3D Model Now button clicked');
 
                 // Wait for "Upload Successful" modal to appear first
@@ -2796,6 +3055,46 @@ class KiriEngineAutomation {
                                 console.log(`Screenshot already in extracted folder: ${screenshotName}`);
                             }
                             
+                            // CRITICAL: Trigger VPS auto-upload for scan process
+                            // The zip-extractor watcher won't catch this because we extract directly
+                            console.log('📦 Triggering VPS auto-upload for extracted files...');
+                            try {
+                                // Find GLB files in extracted directory
+                                const glbFiles = extractedFiles.filter(f => f.toLowerCase().endsWith('.glb'));
+                                
+                                if (glbFiles.length > 0) {
+                                    console.log(`📦 Found ${glbFiles.length} GLB file(s) for auto-upload:`, glbFiles);
+                                    
+                                    // Use zip-extractor's autoUploadGLBFiles method if available
+                                    if (typeof global !== 'undefined' && global.zipExtractor) {
+                                        console.log('📦 Using zip-extractor for auto-upload...');
+                                        await global.zipExtractor.autoUploadGLBFiles(extractedDir, extractedFiles);
+                                        console.log('✅ VPS auto-upload completed via zip-extractor');
+                                        
+                                        // Emit socket events to update pipeline
+                                        if (global.io) {
+                                            global.io.emit('progress', {
+                                                step: 'auto-upload',
+                                                message: 'Auto-upload to CI4 completed'
+                                            });
+                                            global.io.emit('glb-uploaded', {
+                                                filename: glbFiles[0],
+                                                success: true
+                                            });
+                                        }
+                                    } else {
+                                        // Fallback: Manually upload GLB files to VPS
+                                        console.log('📦 zip-extractor not available, uploading directly to VPS...');
+                                        await this.uploadGLBToVPSDirect(extractedDir, glbFiles);
+                                    }
+                                } else {
+                                    console.log('⚠️ No GLB files found in extracted directory');
+                                }
+                            } catch (uploadErr) {
+                                console.error('❌ Error triggering VPS auto-upload:', uploadErr.message);
+                                // Don't throw - continue with process even if upload fails
+                            }
+                            
                             // Optionally delete the zip file after extraction
                             try {
                                 await fs.remove(zipPath);
@@ -3383,6 +3682,84 @@ class KiriEngineAutomation {
         }
     }
 
+
+    /**
+     * Direct VPS upload method (fallback if zip-extractor not available)
+     */
+    async uploadGLBToVPSDirect(extractedDir, glbFiles) {
+        try {
+            const config = require('./config');
+            const FormData = require('form-data');
+            const nodeFetch = require('node-fetch');
+            
+            const vpsConfig = {
+                baseUrl: config.VPS_BASE_URL || 'https://crca-artifacts-contentmanagement.site',
+                apiKey: config.VPS_API_KEY || 'mysecret_api_key@123this_is_a_secret_key_to_access_the_php_system'
+            };
+            
+            for (const glbFile of glbFiles) {
+                const glbPath = path.join(extractedDir, glbFile);
+                
+                // Find screenshot if available
+                const extractedItems = await fs.readdir(extractedDir);
+                const screenshotPattern = /^model_screenshot_\d+\.png$/i;
+                const screenshots = extractedItems.filter(name => screenshotPattern.test(name));
+                const imageFile = screenshots.length > 0 ? screenshots[0] : 
+                                 extractedItems.find(f => /\.(png|jpg|jpeg|webp)$/i.test(f));
+                
+                const formData = new FormData();
+                const fileBuffer = await fs.readFile(glbPath);
+                
+                formData.append('file', fileBuffer, {
+                    filename: glbFile,
+                    contentType: 'model/gltf-binary'
+                });
+                formData.append('api_key', vpsConfig.apiKey);
+                
+                if (imageFile) {
+                    const imagePath = path.join(extractedDir, imageFile);
+                    const imageBuffer = await fs.readFile(imagePath);
+                    formData.append('image', imageBuffer, {
+                        filename: imageFile,
+                        contentType: imageFile.toLowerCase().endsWith('.jpg') || imageFile.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png'
+                    });
+                }
+                
+                const url = `${vpsConfig.baseUrl}/remote-upload/drop-file`;
+                const response = await nodeFetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': vpsConfig.apiKey,
+                        ...formData.getHeaders()
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    console.log(`✅ GLB file uploaded to VPS: ${glbFile}`);
+                    
+                    // Emit socket events
+                    if (global.io) {
+                        global.io.emit('progress', {
+                            step: 'auto-upload',
+                            message: 'Auto-upload to CI4 completed'
+                        });
+                        global.io.emit('glb-uploaded', {
+                            filename: glbFile,
+                            success: true
+                        });
+                    }
+                } else {
+                    console.error(`❌ VPS upload failed for ${glbFile}:`, result.error);
+                }
+            }
+        } catch (error) {
+            console.error('❌ Error in direct VPS upload:', error.message);
+            throw error;
+        }
+    }
 
     async close() {
         try {
