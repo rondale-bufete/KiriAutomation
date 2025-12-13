@@ -399,9 +399,9 @@
             fixPipelineBtn.addEventListener('click', () => {
                 console.log('🔧 Fix Pipeline button clicked');
                 if (window.scanner) {
-                    window.scanner.forcePipelineToProcessing();
-                } else {
                     console.error('Scanner not found!');
+                } else {
+                    window.scanner.forcePipelineToProcessing();
                 }
             });
         }
@@ -410,9 +410,9 @@
             checkPipelineBtn.addEventListener('click', () => {
                 console.log('🔍 Check Pipeline button clicked');
                 if (window.scanner) {
-                    window.scanner.getCurrentPipelineState();
-                } else {
                     console.error('Scanner not found!');
+                } else {
+                    window.scanner.getCurrentPipelineState();
                 }
             });
         }
@@ -421,9 +421,9 @@
             debugProcessingBtn.addEventListener('click', () => {
                 console.log('🐛 Debug Processing button clicked');
                 if (window.scanner) {
-                    window.scanner.debugProcessingStatus();
-                } else {
                     console.error('Scanner not found!');
+                } else {
+                    window.scanner.debugProcessingStatus();
                 }
             });
         }

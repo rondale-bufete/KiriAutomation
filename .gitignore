@@ -11,6 +11,8 @@ session/
 /daemon
 /extracted
 
+config.js
+
 edit-env.js
 downloads/
 uploads/
