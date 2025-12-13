@@ -73,15 +73,6 @@ A web application that automates the photogrammetry process using Kiri Engine. T
 
 ## Configuration
 
-### Hardcoded Settings
-
-All configuration is now hardcoded in `config.js` for simplicity:
-
-- `KIRI_EMAIL`: Your Kiri Engine email address (update in config.js)
-- `KIRI_PASSWORD`: Your Kiri Engine password (update in config.js)
-- `PORT`: Server port (default: 3002)
-- `NODE_ENV`: Environment (development/production)
-- `BROWSER_TYPE`: Browser type (chrome/chromium/firefox/edge)
 
 ### Browser Settings
 
